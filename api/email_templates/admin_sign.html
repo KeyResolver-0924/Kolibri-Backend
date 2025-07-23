@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Pantbrev redo för bostadsrättsföreningens godkännande</h1>
+    
+<div class="deed-details">  
+    <h2>Information om pantbrevet</h2>
+    <ul>
+        <li>
+            <strong>Referensnummer</strong>
+            {{ deed.reference_number }}
+        </li>
+        <li>
+            <strong>Lägenhet</strong>
+            {{ deed.apartment_number }}
+        </li>
+        <li>
+            <strong>Adress</strong>
+            {{ deed.apartment_address }}
+        </li>
+        <li>
+            <strong>Belopp</strong>
+            {{ deed.amount }} SEK
+        </li>
+    </ul>
+
+    <h2>Låntagare</h2>
+    <ul>
+        {% for borrower in deed.borrowers %}
+        <li>
+            <strong>{{ borrower.name }}</strong>
+            <span class="status signed">✓ Signerat {{ borrower.signature_timestamp|date }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="action">
+    <a href="{{ signing_url }}" class="button">Granska och signera</a>
+    <p class="note">Du behöver BankID för att signera pantbrevet</p>
+</div>
+
+<div class="deed-details">
+    <h2>Att granska</h2>
+    <ul style="padding-left: 0; margin: 0;">
+        <li style="margin-bottom: 12px; list-style: none;">
+            <strong>1.</strong> Verifiera att lägenhetsuppgifterna stämmer
+        </li>
+        <li style="margin-bottom: 12px; list-style: none;">
+            <strong>2.</strong> Kontrollera att beloppet är korrekt
+        </li>
+        <li style="margin-bottom: 12px; list-style: none;">
+            <strong>3.</strong> Bekräfta att alla låntagare har signerat
+        </li>
+        <li style="list-style: none;">
+            <strong>4.</strong> Säkerställ att pantbrevet följer föreningens stadgar
+        </li>
+    </ul>
+</div>
+{% endblock %} 

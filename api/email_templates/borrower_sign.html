@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Pantbrev kräver din signatur</h1>
+
+<div class="deed-details">
+    <h2>Information om pantbrevet</h2>
+    <ul>
+        <li>
+            <strong>Referensnummer</strong>
+            {{ deed.reference_number }}
+        </li>
+        <li>
+            <strong>Lägenhet</strong>
+            {{ deed.apartment_number }}
+        </li>
+        <li>
+            <strong>Adress</strong>
+            {{ deed.apartment_address }}
+        </li>
+        <li>
+            <strong>Bostadsrättsförening</strong>
+            {{ deed.cooperative_name }}
+        </li>
+    </ul>
+
+    <h2>Signeringsstatus</h2>
+    <ul>
+        {% for borrower in deed.borrowers %}
+        <li>
+            <strong>{{ borrower.name }}</strong>
+            {% if borrower.signature_timestamp %}
+                <span class="status signed">✓ Signerat</span>
+            {% else %}
+                <span class="status pending">Väntar på signatur</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="action">
+    <a href="{{ signing_url }}" class="button">Signera nu</a>
+    <p class="note">Du behöver BankID för att signera pantbrevet</p>
+</div>
+
+<div class="deed-details">
+    <h2>Nästa steg</h2>
+    <ol style="padding-left: 24px; margin: 0;">
+        <li style="margin-bottom: 12px;">Klicka på "Signera nu" knappen ovan</li>
+        <li style="margin-bottom: 12px;">Logga in med ditt BankID</li>
+        <li style="margin-bottom: 12px;">Granska pantbrevet noggrant</li>
+        <li>Slutför signeringen med BankID</li>
+    </ol>
+</div>
+{% endblock %} 

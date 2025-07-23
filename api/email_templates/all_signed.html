@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Pantbrevet är nu fullständigt signerat</h1>
+
+<div class="deed-details">
+    <h2>Information om pantbrevet</h2>
+    <ul>
+        <li>
+            <strong>Referensnummer</strong>
+            {{ deed.reference_number }}
+        </li>
+        <li>
+            <strong>Lägenhet</strong>
+            {{ deed.apartment_number }}
+        </li>
+        <li>
+            <strong>Adress</strong>
+            {{ deed.apartment_address }}
+        </li>
+        <li>
+            <strong>Bostadsrättsförening</strong>
+            {{ deed.cooperative_name }}
+        </li>
+        <li>
+            <strong>Belopp</strong>
+            {{ deed.amount }} SEK
+        </li>
+    </ul>
+
+    <h2>Signaturer</h2>
+    <ul>
+        {% for borrower in deed.borrowers %}
+        <li>
+            <strong>{{ borrower.name }}</strong>
+            <span class="status signed">✓ Signerat {{ borrower.signature_timestamp|date }}</span>
+        </li>
+        {% endfor %}
+        
+        <li>
+            <strong>{{ deed.administrator_name }}</strong>
+            <span class="status signed">✓ Signerat {{ deed.administrator_signature_timestamp|date }}</span>
+            <div class="note" style="margin: 4px 0 0;">Bostadsrättsföreningen</div>
+        </li>
+    </ul>
+</div>
+
+<div class="action">
+    <a href="{{ deed_url }}" class="button">Visa pantbrev</a>
+</div>
+
+<div class="deed-details">
+    <h2>Nästa steg</h2>
+    <ul style="padding-left: 0; margin: 0;">
+        <li style="margin-bottom: 12px; list-style: none;">
+            <strong>✓</strong> Pantbrevet är nu registrerat och giltigt
+        </li>
+        <li style="margin-bottom: 12px; list-style: none;">
+            <strong>✓</strong> En kopia har skickats till alla berörda parter
+        </li>
+        <li style="list-style: none;">
+            <strong>✓</strong> Du kan när som helst se pantbrevet genom att logga in på plattformen
+        </li>
+    </ul>
+</div>
+{% endblock %} 
