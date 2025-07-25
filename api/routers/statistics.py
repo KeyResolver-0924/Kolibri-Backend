@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import logging
 from api.config import get_supabase
 from supabase._async.client import AsyncClient as SupabaseClient
 from api.schemas.statistics import StatsSummary, StatusDurationStats, TimelineStats
 from api.dependencies.auth import get_current_user
+from api.utils.supabase_utils import handle_supabase_operation
 
 logger = logging.getLogger(__name__)
 
@@ -236,3 +237,252 @@ async def get_timeline_stats(
     except Exception as e:
         logger.error("Failed to generate timeline statistics: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e)) 
+
+@router.get(
+    "/bank-dashboard",
+    summary="Get bank dashboard statistics",
+    description="Get dashboard statistics for bank users including total deeds, pending signatures, and completed deeds."
+)
+async def get_bank_dashboard_stats(
+    current_user: dict = Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase)
+):
+    """
+    Get dashboard statistics for bank users.
+    
+    Args:
+        current_user: Current authenticated user
+        supabase: Supabase client instance
+        
+    Returns:
+        Dashboard statistics for bank users
+        
+    Raises:
+        HTTPException: If user is not a bank user or if query fails
+    """
+    if current_user.get("role") != "bank_user":
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Only bank users can access this endpoint."
+        )
+    
+    try:
+        # Get total deeds for this bank
+        total_deeds_result = await handle_supabase_operation(
+            operation_name="get total deeds for bank",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("created_by", current_user["id"])
+                .execute(),
+            error_msg="Failed to get total deeds count"
+        )
+        
+        # Get pending signatures (deeds in progress)
+        pending_signatures_result = await handle_supabase_operation(
+            operation_name="get pending signatures for bank",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("created_by", current_user["id"])
+                .in_("status", ["PENDING_BORROWER_SIGNATURE", "PENDING_HOUSING_COOPERATIVE_SIGNATURE"])
+                .execute(),
+            error_msg="Failed to get pending signatures count"
+        )
+        
+        # Get completed deeds
+        completed_deeds_result = await handle_supabase_operation(
+            operation_name="get completed deeds for bank",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("created_by", current_user["id"])
+                .eq("status", "COMPLETED")
+                .execute(),
+            error_msg="Failed to get completed deeds count"
+        )
+        
+        return {
+            "total_deeds": total_deeds_result.count or 0,
+            "pending_signatures": pending_signatures_result.count or 0,
+            "completed_deeds": completed_deeds_result.count or 0,
+            "bank_name": current_user.get("bank_name", "Unknown Bank")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting bank dashboard stats: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get dashboard statistics"
+        )
+
+@router.get(
+    "/cooperative-dashboard",
+    summary="Get cooperative dashboard statistics",
+    description="Get dashboard statistics for cooperative admins including pending reviews, approved deeds, and total units."
+)
+async def get_cooperative_dashboard_stats(
+    current_user: dict = Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase)
+):
+    """
+    Get dashboard statistics for cooperative admins.
+    
+    Args:
+        current_user: Current authenticated user
+        supabase: Supabase client instance
+        
+    Returns:
+        Dashboard statistics for cooperative admins
+        
+    Raises:
+        HTTPException: If user is not a cooperative admin or if query fails
+    """
+    if current_user.get("role") != "cooperative_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Only cooperative admins can access this endpoint."
+        )
+    
+    try:
+        # Get cooperative ID for this admin
+        cooperative_result = await handle_supabase_operation(
+            operation_name="get cooperative for admin",
+            operation=supabase.table("housing_cooperatives")
+                .select("id, total_units")
+                .eq("admin_id", current_user["id"])
+                .single()
+                .execute(),
+            error_msg="Failed to get cooperative details"
+        )
+        
+        cooperative_id = cooperative_result.data["id"]
+        total_units = cooperative_result.data.get("total_units", 0)
+        
+        # Get pending reviews (deeds awaiting cooperative approval)
+        pending_reviews_result = await handle_supabase_operation(
+            operation_name="get pending reviews for cooperative",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("housing_cooperative_id", cooperative_id)
+                .eq("status", "PENDING_HOUSING_COOPERATIVE_SIGNATURE")
+                .execute(),
+            error_msg="Failed to get pending reviews count"
+        )
+        
+        # Get approved deeds this month
+        this_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        approved_this_month_result = await handle_supabase_operation(
+            operation_name="get approved deeds this month",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("housing_cooperative_id", cooperative_id)
+                .eq("status", "COMPLETED")
+                .gte("updated_at", this_month_start.isoformat())
+                .execute(),
+            error_msg="Failed to get approved deeds count"
+        )
+        
+        # Get active deeds (currently processing)
+        active_deeds_result = await handle_supabase_operation(
+            operation_name="get active deeds for cooperative",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("housing_cooperative_id", cooperative_id)
+                .in_("status", ["CREATED", "PENDING_BORROWER_SIGNATURE", "PENDING_HOUSING_COOPERATIVE_SIGNATURE"])
+                .execute(),
+            error_msg="Failed to get active deeds count"
+        )
+        
+        return {
+            "pending_reviews": pending_reviews_result.count or 0,
+            "approved_this_month": approved_this_month_result.count or 0,
+            "total_units": total_units,
+            "active_deeds": active_deeds_result.count or 0,
+            "cooperative_name": cooperative_result.data.get("name", "Unknown Cooperative")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cooperative dashboard stats: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get dashboard statistics"
+        )
+
+@router.get(
+    "/accounting-dashboard",
+    summary="Get accounting firm dashboard statistics",
+    description="Get dashboard statistics for accounting firms including active cooperatives, pending actions, and processing metrics."
+)
+async def get_accounting_dashboard_stats(
+    current_user: dict = Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase)
+):
+    """
+    Get dashboard statistics for accounting firms.
+    
+    Args:
+        current_user: Current authenticated user
+        supabase: Supabase client instance
+        
+    Returns:
+        Dashboard statistics for accounting firms
+        
+    Raises:
+        HTTPException: If user is not an accounting firm or if query fails
+    """
+    if current_user.get("role") != "accounting_firm":
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Only accounting firms can access this endpoint."
+        )
+    
+    try:
+        # Get active cooperatives managed by this accounting firm
+        active_cooperatives_result = await handle_supabase_operation(
+            operation_name="get active cooperatives for accounting firm",
+            operation=supabase.table("housing_cooperatives")
+                .select("id", count="exact")
+                .eq("accounting_firm_id", current_user["id"])
+                .eq("status", "active")
+                .execute(),
+            error_msg="Failed to get active cooperatives count"
+        )
+        
+        # Get pending actions (deeds requiring attention)
+        pending_actions_result = await handle_supabase_operation(
+            operation_name="get pending actions for accounting firm",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("accounting_firm_id", current_user["id"])
+                .in_("status", ["CREATED", "PENDING_BORROWER_SIGNATURE"])
+                .execute(),
+            error_msg="Failed to get pending actions count"
+        )
+        
+        # Get processed deeds this month
+        this_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        processed_this_month_result = await handle_supabase_operation(
+            operation_name="get processed deeds this month",
+            operation=supabase.table("mortgage_data")
+                .select("id", count="exact")
+                .eq("accounting_firm_id", current_user["id"])
+                .gte("created_at", this_month_start.isoformat())
+                .execute(),
+            error_msg="Failed to get processed deeds count"
+        )
+        
+        # Calculate average processing time (mock data for now)
+        avg_processing = "1.3 days"  # This would be calculated from actual data
+        
+        return {
+            "active_cooperatives": active_cooperatives_result.count or 0,
+            "pending_actions": pending_actions_result.count or 0,
+            "processed_this_month": processed_this_month_result.count or 0,
+            "avg_processing": avg_processing,
+            "accounting_firm_name": current_user.get("accounting_firm_name", "Unknown Firm")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting accounting dashboard stats: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get dashboard statistics"
+        ) 
