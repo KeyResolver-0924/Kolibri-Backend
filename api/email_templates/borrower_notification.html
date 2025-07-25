@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nytt Pantbrev Skapat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px 8px 0 0;
+        }
+        .content {
+            background-color: #ffffff;
+            padding: 30px;
+            border: 1px solid #e9ecef;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-radius: 0 0 8px 8px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+        .deed-info {
+            background-color: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .deed-info h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .deed-info p {
+            margin: 8px 0;
+        }
+        .action-button {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        .action-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Nytt Pantbrev Skapat</h1>
+        <p>Hej {{ borrower_name }},</p>
+    </div>
+    
+    <div class="content">
+        <p>Ett nytt pantbrev har skapats för din bostadsrätt. Nedan finns detaljerad information:</p>
+        
+        <div class="deed-info">
+            <h3>Pantbrevsinformation</h3>
+            <p><strong>Referensnummer:</strong> {{ deed.reference_number }}</p>
+            <p><strong>Lägenhetsnummer:</strong> {{ deed.apartment_number }}</p>
+            <p><strong>Adress:</strong> {{ deed.apartment_address }}</p>
+            <p><strong>Bostadsrättsförening:</strong> {{ deed.cooperative_name }}</p>
+            <p><strong>Belopp:</strong> {{ deed.amount }} SEK</p>
+            <p><strong>Skapat datum:</strong> {{ deed.created_date }}</p>
+        </div>
+        
+        <p><strong>Viktigt:</strong> Du kommer att få ytterligare instruktioner om signeringsprocessen inom kort.</p>
+        
+        <p>Om du har några frågor, kontakta gärna din bank eller bostadsrättsföreningen.</p>
+    </div>
+    
+    <div class="footer">
+        <p>Detta meddelande skickades automatiskt från {{ from_name }}</p>
+        <p>&copy; {{ current_year }} {{ from_name }}. Alla rättigheter förbehållna.</p>
+    </div>
+</body>
+</html> 

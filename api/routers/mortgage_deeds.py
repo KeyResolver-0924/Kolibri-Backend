@@ -8,13 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi import Response
 
 # Local imports
-from api.config import get_supabase
+from api.config import get_supabase, get_settings
 from api.dependencies.auth import get_current_user
 from api.schemas.mortgage_deed import (
     MortgageDeedCreate,
     MortgageDeedUpdate)
 from api.utils.audit import create_audit_log
 from api.utils.supabase_utils import handle_supabase_operation
+from api.utils.email_utils import send_email
 from supabase._async.client import AsyncClient as SupabaseClient
 
 logger = logging.getLogger(__name__)
@@ -30,12 +31,101 @@ router = APIRouter(
     }
 )
 
+async def send_mortgage_deed_notifications(
+    deed_id: int,
+    supabase: SupabaseClient,
+    settings
+) -> bool:
+    """
+    Send notifications to borrowers and housing cooperatives after mortgage deed creation.
+    
+    Args:
+        deed_id: ID of the created mortgage deed
+        supabase: Supabase client instance
+        settings: Application settings
+        
+    Returns:
+        bool: True if all notifications were sent successfully
+    """
+    try:
+        # Fetch the created deed with all related data
+        deed_result = await handle_supabase_operation(
+            operation_name=f"fetch created deed {deed_id}",
+            operation=supabase.table("mortgage_data").select(
+                "*, borrowers(*), housing_cooperatives(*)"
+            ).eq("id", deed_id).single().execute(),
+            error_msg="Failed to fetch created deed details"
+        )
+        
+        deed = deed_result.data
+        all_emails_sent = True
+        
+        # Send notifications to borrowers
+        for borrower in deed.get("borrowers", []):
+            context = {
+                "borrower_name": borrower.get('name', ''),
+                "deed": {
+                    "reference_number": deed.get("credit_number", ""),
+                    "apartment_number": deed.get("apartment_number", ""),
+                    "apartment_address": deed.get("apartment_address", ""),
+                    "cooperative_name": deed.get("housing_cooperative_name", ""),
+                    "amount": deed.get("amount", 0),
+                    "created_date": deed.get("created_at", "")
+                },
+                "from_name": settings.EMAILS_FROM_NAME
+            }
+            
+            success = await send_email(
+                recipient_email=borrower.get("email", ""),
+                subject="Nytt pantbrev skapat - Action Required",
+                template_name="borrower_notification.html",
+                template_context=context,
+                settings=settings
+            )
+            
+            if not success:
+                all_emails_sent = False
+                logger.error(f"Failed to send email to borrower {borrower.get('email', '')}")
+        
+        # Send notification to housing cooperative administrator
+        if deed.get("housing_cooperative_id"):
+            coop_context = {
+                "admin_name": deed.get("administrator_name", ""),
+                "deed": {
+                    "reference_number": deed.get("credit_number", ""),
+                    "apartment_number": deed.get("apartment_number", ""),
+                    "apartment_address": deed.get("apartment_address", ""),
+                    "cooperative_name": deed.get("housing_cooperative_name", ""),
+                    "borrowers": deed.get("borrowers", []),
+                    "created_date": deed.get("created_at", "")
+                },
+                "from_name": settings.EMAILS_FROM_NAME
+            }
+            
+            success = await send_email(
+                recipient_email=deed.get("administrator_email", ""),
+                subject="Nytt pantbrev skapat - Bostadsrättsförening",
+                template_name="cooperative_notification.html",
+                template_context=coop_context,
+                settings=settings
+            )
+            
+            if not success:
+                all_emails_sent = False
+                logger.error(f"Failed to send email to cooperative administrator {deed.get('administrator_email', '')}")
+        
+        return all_emails_sent
+        
+    except Exception as e:
+        logger.error(f"Error sending mortgage deed notifications: {str(e)}")
+        return False
+
 @router.post(
     "/create",
     status_code=status.HTTP_201_CREATED,
     summary="Create a new mortgage deed",
     description="""
-    Creates a new mortgage deed with the provided details.
+    Creates a new mortgage deed with the provided details and sends notifications to all parties.
     """,
     responses={
         201: {
@@ -46,15 +136,17 @@ router = APIRouter(
 async def create_mortgage_deed(
     deed: MortgageDeedCreate,
     current_user: dict = Depends(get_current_user),
-    supabase: SupabaseClient = Depends(get_supabase)
+    supabase: SupabaseClient = Depends(get_supabase),
+    settings = Depends(get_settings)
 ):
     """
-    Create a new mortgage deed with associated borrowers.
+    Create a new mortgage deed with associated borrowers and send notifications.
     
     Args:
         deed: Mortgage deed creation data
         current_user: Current authenticated user
         supabase: Supabase client instance
+        settings: Application settings
         
     Returns:
         Created mortgage deed with all relations
@@ -64,7 +156,7 @@ async def create_mortgage_deed(
     """
     deed_data = deed.model_dump()
     
-    transformed_data=transform_deed_data(deed_data)
+    transformed_data = transform_deed_data(deed_data)
 
     # Create the mortgage deed
     deed_result = await handle_supabase_operation(
@@ -76,9 +168,48 @@ async def create_mortgage_deed(
         error_msg="Failed to create mortgage deed"
     )
     
+    # Get the created deed ID
+    created_deed_id = deed_result.data[0]["id"]
+    
+    # Send notifications to all parties
+    notifications_sent = await send_mortgage_deed_notifications(
+        created_deed_id,
+        supabase,
+        settings
+    )
+    
+    # Create audit log for deed creation
+    await create_audit_log(
+        supabase,
+        created_deed_id,
+        "DEED_CREATED",
+        current_user["id"],
+        f"Created mortgage deed {created_deed_id} for apartment {transformed_data.get('apartment_number', '')} at {transformed_data.get('apartment_address', '')}"
+    )
+    
+    # Create audit log for notifications
+    if notifications_sent:
+        await create_audit_log(
+            supabase,
+            created_deed_id,
+            "NOTIFICATIONS_SENT",
+            current_user["id"],
+            f"Successfully sent notifications for mortgage deed {created_deed_id}"
+        )
+    else:
+        await create_audit_log(
+            supabase,
+            created_deed_id,
+            "NOTIFICATION_FAILURE",
+            current_user["id"],
+            f"Failed to send some notifications for mortgage deed {created_deed_id}"
+        )
+    
     return {
         "status": "success",
-        "message": "Mortgage created successfully.",
+        "message": "Mortgage deed created successfully.",
+        "deed_id": created_deed_id,
+        "notifications_sent": notifications_sent
     }
 
 def transform_deed_data(input_data:MortgageDeedCreate):
