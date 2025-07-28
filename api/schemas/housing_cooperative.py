@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 import re
 
@@ -51,7 +51,8 @@ class HousingCooperativeBase(BaseModel):
         description="Email of the administrator"
     )
 
-    @validator('postal_code')
+    @field_validator('postal_code')
+    @classmethod
     def validate_postal_code(cls, v: str) -> str:
         # Remove any whitespace and check if it's 5 digits
         cleaned = v.replace(" ", "")
@@ -59,20 +60,23 @@ class HousingCooperativeBase(BaseModel):
             raise ValueError('Postal code must be 5 digits, optionally separated by space (e.g., "123 45" or "12345")')
         return v  # Return original format to preserve user input
 
-    @validator('organisation_number')
+    @field_validator('organisation_number')
+    @classmethod
     def validate_organisation_number(cls, v: str) -> str:
         if not re.match(r'^\d{6}-\d{4}$', v):
             raise ValueError('Organization number must be in format XXXXXX-XXXX')
         return v
 
-    @validator('administrator_person_number')
+    @field_validator('administrator_person_number')
+    @classmethod
     def validate_person_number(cls, v: str) -> str:
         # Check both formats: YYYYMMDDXXXX and YYYYMMDD-XXXX
         if not re.match(r'^\d{8}[-]?\d{4}$', v):
             raise ValueError('Person number must be in format YYYYMMDDXXXX or YYYYMMDD-XXXX')
         return v
 
-    @validator('administrator_company')
+    @field_validator('administrator_company')
+    @classmethod
     def validate_administrator_company(cls, v: Optional[str]) -> Optional[str]:
         if v is None or v.strip() == "":
             return None
@@ -97,7 +101,8 @@ class HousingCooperativeUpdate(BaseModel):
     administrator_person_number: Optional[str] = Field(None, description="Personal number of the administrator")
     administrator_email: Optional[EmailStr] = Field(None, description="Email of the administrator")
 
-    @validator('administrator_company')
+    @field_validator('administrator_company')
+    @classmethod
     def validate_administrator_company(cls, v: Optional[str]) -> Optional[str]:
         if v is None or v.strip() == "":
             return None
