@@ -7,8 +7,8 @@ import logging
 import sys
 
 from api.config import get_settings, SupabaseManager
-from api.routers import mortgage_deeds
-# , housing_cooperative, signing, statistics, audit_logs
+from api.routers import mortgage_deeds, housing_cooperative, signing, statistics, audit_logs
+from api.utils.response_handler import log_response_middleware
 
 # Configure logging
 logging.basicConfig(
@@ -40,17 +40,29 @@ app = FastAPI(
 
 # Get allowed origins from settings
 settings = get_settings()
-origins = settings.BACKEND_CORS_ORIGINS
 
-# Add CORS middleware using origins from settings
+# Set up CORS with proper configuration
+origins = [
+    "http://localhost:3000",
+    "http://localhost:3001", 
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
+]
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Use your configured origins here
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Add response logging middleware
+app.middleware("http")(log_response_middleware)
 
 # Security headers middleware
 @app.middleware("http")
@@ -98,12 +110,32 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         }
     )
 
+# General exception handler for 500 errors
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        f"Unhandled exception: {str(exc)}",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "exception_type": type(exc).__name__
+        },
+        exc_info=True
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "message": str(exc) if settings.ENVIRONMENT == "development" else "An unexpected error occurred"
+        }
+    )
+
 # Include your routers with proper prefixes and tags
 app.include_router(mortgage_deeds.router, prefix="/api/mortgage-deeds", tags=["mortgage-deeds"])
-# app.include_router(housing_cooperative.router, prefix="/api/housing-cooperatives", tags=["housing-cooperatives"])
-# app.include_router(signing.router, prefix="/api/mortgage-deeds", tags=["signing"])
-# app.include_router(statistics.router, prefix="/api/statistics", tags=["statistics"])
-# app.include_router(audit_logs.router, prefix="/api", tags=["audit-logs"])
+app.include_router(housing_cooperative.router, prefix="/api/housing-cooperatives", tags=["housing-cooperatives"])
+app.include_router(signing.router, prefix="/api/mortgage-deeds", tags=["signing"])
+app.include_router(statistics.router, prefix="/api/statistics", tags=["statistics"])
+app.include_router(audit_logs.router, prefix="/api", tags=["audit-logs"])
 
 # Run with uvicorn if executed directly
 if __name__ == "__main__":
@@ -111,3 +143,5 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run("main:app", host="0.0.0.0", port=port, proxy_headers=True)
+
+    

@@ -1,31 +1,68 @@
-import requests
-import json
-import certifi
+import asyncio
+import os
+import sys
+from pathlib import Path
 
-print(certifi.where())
-# Choose the appropriate URL for your environment
-API_URL = "https://appapi2.test.bankid.com/rp/v6.0/sign"
+# Add the current directory to Python path
+sys.path.append(str(Path(__file__).parent))
 
-# Example payload (base64-encoded userVisibleData, Markdown format)
-payload = {
-    "endUserIp": "192.168.142.180",
-    "userVisibleData": "I0V4YW1wbGUKVGhpcyBpcyBhbiAqZXhhbXBsZSogdGV4dA==",
-    "userVisibleDataFormat": "simpleMarkdownV1",
-    "returnUrl": "https://bankid.example/auth/login_page#nonce=a3618c72-bc71-4002-b3de-509555b175db"
-    # Optionally add 'requirement', 'app', or 'web' keys as needed
-}
+from api.config import get_settings
+from api.utils.supabase_utils import handle_supabase_operation
+from supabase import create_client, Client
 
-headers = {
-    "Content-Type": "application/json"
-}
+async def test_backend():
+    """Test the backend configuration and basic functionality."""
+    try:
+        print("Testing backend configuration...")
+        
+        # Test settings
+        settings = get_settings()
+        print(f"✅ Settings loaded successfully")
+        print(f"   Supabase URL: {settings.SUPABASE_URL}")
+        print(f"   CORS Origins: {settings.BACKEND_CORS_ORIGINS}")
+        print(f"   Environment: {settings.ENVIRONMENT}")
+        
+        # Test Supabase connection
+        print("\nTesting Supabase connection...")
+        supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        
+        # Test a simple query
+        result = await handle_supabase_operation(
+            operation_name="test connection",
+            operation=supabase.table("mortgage_data").select("id").limit(1).execute(),
+            error_msg="Failed to connect to Supabase"
+        )
+        print("✅ Supabase connection successful")
+        
+        # Test environment variables
+        print("\nTesting environment variables...")
+        required_vars = [
+            "SUPABASE_URL",
+            "SUPABASE_KEY", 
+            "MAILGUN_API_KEY",
+            "MAILGUN_DOMAIN",
+            "EMAILS_FROM_EMAIL",
+            "EMAILS_FROM_NAME",
+            "FRONTEND_URL",
+            "BACKEND_URL"
+        ]
+        
+        missing_vars = []
+        for var in required_vars:
+            if not getattr(settings, var, None):
+                missing_vars.append(var)
+        
+        if missing_vars:
+            print(f"❌ Missing environment variables: {missing_vars}")
+        else:
+            print("✅ All required environment variables are set")
+        
+        print("\n✅ Backend test completed successfully!")
+        
+    except Exception as e:
+        print(f"❌ Backend test failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
-response = requests.post(API_URL, data=json.dumps(payload), headers=headers, verify=False)
-
-print(response.status_code, response.text)
-
-if response.status_code == 200:
-    order_response = response.json()
-    print("OrderRef:", order_response.get("orderRef"))
-    print("AutoStartToken:", order_response.get("autoStartToken"))
-else:
-    print("Error:", response.status_code, response.text)
+if __name__ == "__main__":
+    asyncio.run(test_backend())

@@ -154,108 +154,191 @@ async def create_mortgage_deed(
     Raises:
         HTTPException: If creation fails
     """
-    deed_data = deed.model_dump()
-    
-    transformed_data = transform_deed_data(deed_data)
+    try:
+        logger.info(f"Creating mortgage deed for user: {current_user.get('id')}")
+        logger.info(f"Deed data: {deed.model_dump()}")
+        deed_data = deed.model_dump()
+        
+        # Transform the data
+        try:
+            transformed_data = transform_deed_data(deed)
+            logger.info(f"Transformed data: {transformed_data}")
+        except Exception as e:
+            logger.error(f"Error transforming deed data: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to transform deed data: {str(e)}"
+            )
 
-    # Create the mortgage deed
-    deed_result = await handle_supabase_operation(
-        operation_name="create mortgage deed",
-        operation=supabase.table("mortgage_data").insert({
-            **transformed_data,
-            "created_by": current_user["id"],
-        }).execute(),
-        error_msg="Failed to create mortgage deed"
-    )
-    
-    # Get the created deed ID
-    created_deed_id = deed_result.data[0]["id"]
-    
-    # Send notifications to all parties
-    notifications_sent = await send_mortgage_deed_notifications(
-        created_deed_id,
-        supabase,
-        settings
-    )
-    
-    # Create audit log for deed creation
-    await create_audit_log(
-        supabase,
-        created_deed_id,
-        "DEED_CREATED",
-        current_user["id"],
-        f"Created mortgage deed {created_deed_id} for apartment {transformed_data.get('apartment_number', '')} at {transformed_data.get('apartment_address', '')}"
-    )
-    
-    # Create audit log for notifications
-    if notifications_sent:
-        await create_audit_log(
-            supabase,
-            created_deed_id,
-            "NOTIFICATIONS_SENT",
-            current_user["id"],
-            f"Successfully sent notifications for mortgage deed {created_deed_id}"
-        )
-    else:
-        await create_audit_log(
-            supabase,
-            created_deed_id,
-            "NOTIFICATION_FAILURE",
-            current_user["id"],
-            f"Failed to send some notifications for mortgage deed {created_deed_id}"
-        )
-    
-    return {
-        "status": "success",
-        "message": "Mortgage deed created successfully.",
-        "deed_id": created_deed_id,
-        "notifications_sent": notifications_sent
-    }
-
-def transform_deed_data(input_data:MortgageDeedCreate):
-    credit_numbers = (
-        [int(input_data["credit_number"])]
-        if not input_data.get("credit_numbers")
-        else [int(n) for n in input_data["credit_numbers"]]
-    )
-
-    # Build housing cooperative info
-    housing_cooperative_info = {
-        "organization_number": input_data["organization_number"],
-        "housing_cooperative_id": input_data["housing_cooperative_id"],
-        "housing_cooperative_name": input_data["cooperative_name"],
-        "housing_cooperative_address": input_data["cooperative_address"],
-        "housing_cooperative_postal_code": input_data["cooperative_postal_code"],
-        "housing_cooperative_city": input_data["cooperative_city"]
-    }
-
-    # Build apartment info
-    apartment_info = {
-        "apartment_address": input_data["apartment_address"],
-        "apartment_number": input_data["apartment_number"],
-        "apartment_postal_code": input_data["apartment_postal_code"],
-        "apartment_city": input_data["apartment_city"]
-    }
-
-    # Convert housing cooperative signers
-    housing_cooperative_signers = [
-        {
-            "administrator_name": signer["name"],
-            "administrator_person_number": signer["person_number"],
-            "administrator_email": signer["email"]
+        # Create the mortgage deed
+        try:
+            deed_result = await handle_supabase_operation(
+                operation_name="create mortgage deed",
+                operation=supabase.table("mortgage_data").insert({
+                    **transformed_data,
+                    "created_by": current_user["id"],
+                }).execute(),
+                error_msg="Failed to create mortgage deed"
+            )
+            logger.info(f"Mortgage deed created successfully: {deed_result.data}")
+        except Exception as e:
+            logger.error(f"Error creating mortgage deed in database: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create mortgage deed in database: {str(e)}"
+            )
+        
+        # Get the created deed ID
+        if not deed_result.data or len(deed_result.data) == 0:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to get created deed ID"
+            )
+        
+        created_deed_id = deed_result.data[0]["id"]
+        logger.info(f"Created deed ID: {created_deed_id}")
+        
+        # Send notifications to all parties
+        try:
+            notifications_sent = await send_mortgage_deed_notifications(
+                created_deed_id,
+                supabase,
+                settings
+            )
+            logger.info(f"Notifications sent: {notifications_sent}")
+        except Exception as e:
+            logger.error(f"Error sending notifications: {str(e)}")
+            notifications_sent = False
+        
+        # Create audit log for deed creation
+        try:
+            await create_audit_log(
+                supabase,
+                created_deed_id,
+                "DEED_CREATED",
+                current_user["id"],
+                f"Created mortgage deed {created_deed_id} for apartment {transformed_data.get('apartment_info', {}).get('apartment_number', '')} at {transformed_data.get('apartment_info', {}).get('apartment_address', '')}"
+            )
+        except Exception as e:
+            logger.error(f"Error creating audit log: {str(e)}")
+        
+        # Create audit log for notifications
+        try:
+            if notifications_sent:
+                await create_audit_log(
+                    supabase,
+                    created_deed_id,
+                    "NOTIFICATIONS_SENT",
+                    current_user["id"],
+                    f"Successfully sent notifications for mortgage deed {created_deed_id}"
+                )
+            else:
+                await create_audit_log(
+                    supabase,
+                    created_deed_id,
+                    "NOTIFICATION_FAILURE",
+                    current_user["id"],
+                    f"Failed to send some notifications for mortgage deed {created_deed_id}"
+                )
+        except Exception as e:
+            logger.error(f"Error creating notification audit log: {str(e)}")
+        
+        return {
+            "status": "success",
+            "message": "Mortgage deed created successfully.",
+            "deed_id": created_deed_id,
+            "notifications_sent": notifications_sent
         }
-        for signer in input_data.get("housing_cooperative_signers", [])
-    ]
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in create_mortgage_deed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
 
-    # Assembling final payload
-    deed_data = {
-        "credit_numbers": credit_numbers,
-        "housing_cooperative_info": housing_cooperative_info,
-        "apartment_info": apartment_info,
-        "housing_cooperative_signers": housing_cooperative_signers
-    }
+def transform_deed_data(input_data: MortgageDeedCreate):
+    """
+    Transform MortgageDeedCreate model to database format.
+    
+    Args:
+        input_data: MortgageDeedCreate model instance
+        
+    Returns:
+        dict: Transformed data for database insertion
+    """
+    try:
+        # Convert model to dict
+        deed_dict = input_data.model_dump()
+        
+        # Handle credit numbers
+        credit_numbers = (
+            [int(deed_dict["credit_number"])]
+            if not deed_dict.get("credit_numbers")
+            else [int(n) for n in deed_dict["credit_numbers"]]
+        )
 
-    return deed_data
+        # Build housing cooperative info
+        housing_cooperative_info = {
+            "organization_number": deed_dict["organization_number"],
+            "housing_cooperative_id": deed_dict["housing_cooperative_id"],
+            "housing_cooperative_name": deed_dict["cooperative_name"],
+            "housing_cooperative_address": deed_dict["cooperative_address"],
+            "housing_cooperative_postal_code": deed_dict["cooperative_postal_code"],
+            "housing_cooperative_city": deed_dict["cooperative_city"]
+        }
+
+        # Build apartment info
+        apartment_info = {
+            "apartment_address": deed_dict["apartment_address"],
+            "apartment_number": deed_dict["apartment_number"],
+            "apartment_postal_code": deed_dict["apartment_postal_code"],
+            "apartment_city": deed_dict["apartment_city"]
+        }
+
+        # Convert housing cooperative signers
+        housing_cooperative_signers = [
+            {
+                "administrator_name": signer["administrator_name"],
+                "administrator_person_number": signer["administrator_person_number"],
+                "administrator_email": signer["administrator_email"]
+            }
+            for signer in deed_dict.get("housing_cooperative_signers", [])
+        ]
+
+        # Convert borrowers
+        borrowers = [
+            {
+                "name": borrower["name"],
+                "person_number": borrower["person_number"],
+                "email": borrower["email"],
+                "ownership_percentage": borrower["ownership_percentage"]
+            }
+            for borrower in deed_dict.get("borrowers", [])
+        ]
+
+        # Assembling final payload
+        deed_data = {
+            "credit_numbers": credit_numbers,
+            "housing_cooperative_info": housing_cooperative_info,
+            "apartment_info": apartment_info,
+            "housing_cooperative_signers": housing_cooperative_signers,
+            "borrowers": borrowers,
+            "is_accounting_firm": deed_dict.get("is_accounting_firm", False),
+            "has_existing_mortgages": deed_dict.get("has_existing_mortgages", False),
+            "existing_mortgage_bank": deed_dict.get("existing_mortgage_bank", ""),
+            "existing_mortgage_date": deed_dict.get("existing_mortgage_date", ""),
+            "notes": deed_dict.get("notes", "")
+        }
+
+        return deed_data
+        
+    except Exception as e:
+        logger.error(f"Error transforming deed data: {str(e)}")
+        raise ValueError(f"Failed to transform deed data: {str(e)}")
 
 # @router.get(
 #     "",

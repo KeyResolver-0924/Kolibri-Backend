@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, validator, root_validator
 from typing import List, Optional, Literal
 from datetime import datetime
 from decimal import Decimal
@@ -35,7 +35,7 @@ class BorrowerCreate(BaseModel):
     email: EmailStr
     ownership_percentage: Decimal = Field(gt=0, le=100)
 
-    @field_validator('person_number')
+    @validator('person_number')
     def validate_person_number(cls, v):
         if not re.match(r'^\d{12}$', v):
             raise ValueError('Person number must be exactly 12 digits')
@@ -57,14 +57,18 @@ class HousingCooperativeSignerResponse(HousingCooperativeSignerCreate):
     signature_timestamp: Optional[datetime] 
 
 class MortgageDeedCreate(BaseModel):
-    credit_number: int
-    credit_numbers: List[int]
+    credit_number: str
+    credit_numbers: List[str]
     add_more_credit_numbers: bool
+    housing_cooperative_id: int
     is_accounting_firm: bool
     borrowers: List[BorrowerCreate]
     housing_cooperative_signers: List[HousingCooperativeSignerCreate]
+    has_existing_mortgages: bool
+    existing_mortgage_bank: str
+    existing_mortgage_date: str
+    notes: str
     organization_number: str
-    housing_cooperative_id: int
     cooperative_name: str
     cooperative_address: str
     cooperative_postal_code: str
@@ -73,14 +77,6 @@ class MortgageDeedCreate(BaseModel):
     apartment_number: str
     apartment_postal_code: str
     apartment_city: str
-    # credit_number: str
-    # housing_cooperative_id: int
-    # apartment_address: str
-    # apartment_postal_code: str
-    # apartment_city: str
-    # apartment_number: str
-    # borrowers: List[BorrowerCreate]
-    # housing_cooperative_signers: Optional[List[HousingCooperativeSignerCreate]] = None
 
 
 class HousingCooperativeResponse(BaseModel):
@@ -95,20 +91,20 @@ class HousingCooperativeResponse(BaseModel):
     administrator_email: Optional[str]
     administrator_company: Optional[str]
 
-# class MortgageDeedResponse(BaseModel):
-#     id: int
-#     created_at: datetime
-#     credit_number: str
-#     housing_cooperative_id: int
-#     housing_cooperative: Optional[HousingCooperativeResponse]
-#     apartment_address: str
-#     apartment_postal_code: str
-#     apartment_city: str
-#     apartment_number: str
-#     status: DeedStatus
-#     bank_id: int
-#     borrowers: List[BorrowerResponse]
-#     housing_cooperative_signers: List[HousingCooperativeSignerResponse]
+class MortgageDeedResponse(BaseModel):
+    id: int
+    created_at: datetime
+    credit_number: str
+    housing_cooperative_id: int
+    housing_cooperative: Optional[HousingCooperativeResponse]
+    apartment_address: str
+    apartment_postal_code: str
+    apartment_city: str
+    apartment_number: str
+    status: DeedStatus
+    bank_id: int
+    borrowers: List[BorrowerResponse]
+    housing_cooperative_signers: List[HousingCooperativeSignerResponse]
 
 class MortgageDeedUpdate(BaseModel):
     apartment_address: Optional[str] = None
@@ -119,18 +115,18 @@ class MortgageDeedUpdate(BaseModel):
     borrowers: Optional[List[BorrowerCreate]] = None
     housing_cooperative_signers: Optional[List[HousingCooperativeSignerCreate]] = None
 
-    @model_validator(mode='after')
-    def validate_ownership_percentages(self) -> 'MortgageDeedUpdate':
-        if self.borrowers:
-            total_percentage = sum(float(borrower.ownership_percentage) for borrower in self.borrowers)
+    @root_validator
+    def validate_ownership_percentages(cls, values):
+        if 'borrowers' in values and values['borrowers']:
+            total_percentage = sum(float(borrower.ownership_percentage) for borrower in values['borrowers'])
             if abs(total_percentage - 100) > 0.01:  # Allow for small floating point differences
                 raise ValueError('Total ownership percentage must equal 100')
-        return self 
+        return values 
 
 class SignRequest(BaseModel):
     person_number: str = Field(pattern=r'^\d{12}$')  # Swedish personal number format
 
-    @field_validator('person_number')
+    @validator('person_number')
     def validate_person_number(cls, v):
         if not re.match(r'^\d{12}$', v):
             raise ValueError('Person number must be exactly 12 digits')
