@@ -1,5 +1,6 @@
 from functools import lru_cache
-from pydantic import BaseSettings, validator
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 from typing import List, Any, Union, Optional
 from supabase._async.client import AsyncClient as SupabaseClient, create_client
 from dotenv import load_dotenv
@@ -118,7 +119,8 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = "development"
     
-    @validator("BACKEND_CORS_ORIGINS")
+    @field_validator("BACKEND_CORS_ORIGINS")
+    @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
         """Convert CORS origins to the correct format."""
         if isinstance(v, str):

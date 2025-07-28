@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, validator, root_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import List, Optional, Literal
 from datetime import datetime
 from decimal import Decimal
@@ -35,7 +35,8 @@ class BorrowerCreate(BaseModel):
     email: EmailStr
     ownership_percentage: Decimal = Field(gt=0, le=100)
 
-    @validator('person_number')
+    @field_validator('person_number')
+    @classmethod
     def validate_person_number(cls, v):
         if not re.match(r'^\d{12}$', v):
             raise ValueError('Person number must be exactly 12 digits')
@@ -115,18 +116,19 @@ class MortgageDeedUpdate(BaseModel):
     borrowers: Optional[List[BorrowerCreate]] = None
     housing_cooperative_signers: Optional[List[HousingCooperativeSignerCreate]] = None
 
-    @root_validator
-    def validate_ownership_percentages(cls, values):
-        if 'borrowers' in values and values['borrowers']:
-            total_percentage = sum(float(borrower.ownership_percentage) for borrower in values['borrowers'])
+    @model_validator(mode='after')
+    def validate_ownership_percentages(self):
+        if hasattr(self, 'borrowers') and self.borrowers:
+            total_percentage = sum(float(borrower.ownership_percentage) for borrower in self.borrowers)
             if abs(total_percentage - 100) > 0.01:  # Allow for small floating point differences
                 raise ValueError('Total ownership percentage must equal 100')
-        return values 
+        return self 
 
 class SignRequest(BaseModel):
     person_number: str = Field(pattern=r'^\d{12}$')  # Swedish personal number format
 
-    @validator('person_number')
+    @field_validator('person_number')
+    @classmethod
     def validate_person_number(cls, v):
         if not re.match(r'^\d{12}$', v):
             raise ValueError('Person number must be exactly 12 digits')
