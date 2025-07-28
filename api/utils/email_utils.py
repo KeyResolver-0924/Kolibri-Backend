@@ -1,4 +1,4 @@
-import aiohttp
+import httpx
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -57,27 +57,26 @@ async def send_email(
         }
         logger.debug(f"Prepared email data: {data}")
         
-        auth = aiohttp.BasicAuth("api", settings.MAILGUN_API_KEY)
         mailgun_url = f"https://api.mailgun.net/v3/{settings.MAILGUN_DOMAIN}/messages"
         logger.debug(f"Using Mailgun URL: {mailgun_url}")
         
-        async with aiohttp.ClientSession() as session:
+        async with httpx.AsyncClient() as client:
             logger.debug("Making request to Mailgun API")
-            async with session.post(
+            response = await client.post(
                 mailgun_url,
                 data=data,
-                auth=auth
-            ) as response:
-                response_text = await response.text()
-                logger.debug(f"Mailgun API response status: {response.status}")
-                logger.debug(f"Mailgun API response: {response_text}")
-                
-                if response.status == 200:
-                    logger.info(f"Email sent successfully to {recipient_email}")
-                    return True
-                else:
-                    logger.error(f"Failed to send email. Status: {response.status}, Error: {response_text}")
-                    return False
+                auth=("api", settings.MAILGUN_API_KEY)
+            )
+            response_text = response.text
+            logger.debug(f"Mailgun API response status: {response.status_code}")
+            logger.debug(f"Mailgun API response: {response_text}")
+            
+            if response.status_code == 200:
+                logger.info(f"Email sent successfully to {recipient_email}")
+                return True
+            else:
+                logger.error(f"Failed to send email. Status: {response.status_code}, Error: {response_text}")
+                return False
                     
     except Exception as e:
         logger.error(f"Failed to send email: {str(e)}", exc_info=True)
