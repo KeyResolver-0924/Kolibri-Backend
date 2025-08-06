@@ -29,7 +29,7 @@ async def test_backend():
         # Test a simple query
         result = await handle_supabase_operation(
             operation_name="test connection",
-            operation=supabase.table("mortgage_data").select("id").limit(1).execute(),
+            operation=supabase.table("mortgage_deeds").select("id").limit(1).execute(),
             error_msg="Failed to connect to Supabase"
         )
         print("✅ Supabase connection successful")

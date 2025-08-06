@@ -260,19 +260,33 @@ async def get_bank_dashboard_stats(
     Raises:
         HTTPException: If user is not a bank user or if query fails
     """
+    logger.info(f"Bank dashboard request - User role: {current_user.get('role')}, User ID: {current_user.get('id')}")
+    
     if current_user.get("role") != "bank_user":
+        logger.error(f"Access denied - User role: {current_user.get('role')}")
         raise HTTPException(
             status_code=403,
             detail="Access denied. Only bank users can access this endpoint."
         )
     
     try:
+        # Get bank_id from user metadata
+        bank_id = current_user.get("bank_id")
+        if not bank_id:
+            logger.error("No bank_id found in user metadata")
+            raise HTTPException(
+                status_code=400,
+                detail="Bank ID not found in user profile"
+            )
+        
+        logger.info(f"Querying deeds for bank_id: {bank_id}")
+        
         # Get total deeds for this bank
         total_deeds_result = await handle_supabase_operation(
             operation_name="get total deeds for bank",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
-                .eq("created_by", current_user["id"])
+                .eq("bank_id", int(bank_id))
                 .execute(),
             error_msg="Failed to get total deeds count"
         )
@@ -280,10 +294,10 @@ async def get_bank_dashboard_stats(
         # Get pending signatures (deeds in progress)
         pending_signatures_result = await handle_supabase_operation(
             operation_name="get pending signatures for bank",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
-                .eq("created_by", current_user["id"])
-                .in_("status", ["PENDING_BORROWER_SIGNATURE", "PENDING_HOUSING_COOPERATIVE_SIGNATURE"])
+                .eq("bank_id", int(bank_id))
+                .in_("status", ["PENDING_BORROWER_SIGNATURE", "PENDING_HOUSING_COOPERATIVE_SIGNATURE", "CREATED"])
                 .execute(),
             error_msg="Failed to get pending signatures count"
         )
@@ -291,9 +305,9 @@ async def get_bank_dashboard_stats(
         # Get completed deeds
         completed_deeds_result = await handle_supabase_operation(
             operation_name="get completed deeds for bank",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
-                .eq("created_by", current_user["id"])
+                .eq("bank_id", int(bank_id))
                 .eq("status", "COMPLETED")
                 .execute(),
             error_msg="Failed to get completed deeds count"
@@ -346,20 +360,21 @@ async def get_cooperative_dashboard_stats(
         cooperative_result = await handle_supabase_operation(
             operation_name="get cooperative for admin",
             operation=supabase.table("housing_cooperatives")
-                .select("id, total_units")
-                .eq("admin_id", current_user["id"])
+                .select("id, name")
+                .eq("created_by", current_user["id"])
                 .single()
                 .execute(),
             error_msg="Failed to get cooperative details"
         )
         
         cooperative_id = cooperative_result.data["id"]
-        total_units = cooperative_result.data.get("total_units", 0)
+        # For now, set total_units to 0 since it's not in the schema
+        total_units = 0
         
         # Get pending reviews (deeds awaiting cooperative approval)
         pending_reviews_result = await handle_supabase_operation(
             operation_name="get pending reviews for cooperative",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
                 .eq("housing_cooperative_id", cooperative_id)
                 .eq("status", "PENDING_HOUSING_COOPERATIVE_SIGNATURE")
@@ -371,11 +386,11 @@ async def get_cooperative_dashboard_stats(
         this_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         approved_this_month_result = await handle_supabase_operation(
             operation_name="get approved deeds this month",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
                 .eq("housing_cooperative_id", cooperative_id)
                 .eq("status", "COMPLETED")
-                .gte("updated_at", this_month_start.isoformat())
+                .gte("created_at", this_month_start.isoformat())
                 .execute(),
             error_msg="Failed to get approved deeds count"
         )
@@ -383,7 +398,7 @@ async def get_cooperative_dashboard_stats(
         # Get active deeds (currently processing)
         active_deeds_result = await handle_supabase_operation(
             operation_name="get active deeds for cooperative",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
                 .eq("housing_cooperative_id", cooperative_id)
                 .in_("status", ["CREATED", "PENDING_BORROWER_SIGNATURE", "PENDING_HOUSING_COOPERATIVE_SIGNATURE"])
@@ -428,56 +443,61 @@ async def get_accounting_dashboard_stats(
     Raises:
         HTTPException: If user is not an accounting firm or if query fails
     """
+    logger.info(f"Accounting dashboard request - User role: {current_user.get('role')}, User ID: {current_user.get('id')}")
+    
     if current_user.get("role") != "accounting_firm":
+        logger.error(f"Access denied - User role: {current_user.get('role')}")
         raise HTTPException(
             status_code=403,
             detail="Access denied. Only accounting firms can access this endpoint."
         )
     
     try:
-        # Get active cooperatives managed by this accounting firm
-        active_cooperatives_result = await handle_supabase_operation(
-            operation_name="get active cooperatives for accounting firm",
+        logger.info("Getting total cooperatives count...")
+        # Get total cooperatives in the system
+        total_cooperatives_result = await handle_supabase_operation(
+            operation_name="get total cooperatives",
             operation=supabase.table("housing_cooperatives")
                 .select("id", count="exact")
-                .eq("accounting_firm_id", current_user["id"])
-                .eq("status", "active")
                 .execute(),
-            error_msg="Failed to get active cooperatives count"
+            error_msg="Failed to get total cooperatives count"
         )
+        logger.info(f"Total cooperatives: {total_cooperatives_result.count}")
         
+        logger.info("Getting pending actions count...")
         # Get pending actions (deeds requiring attention)
         pending_actions_result = await handle_supabase_operation(
-            operation_name="get pending actions for accounting firm",
-            operation=supabase.table("mortgage_data")
+            operation_name="get pending actions",
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
-                .eq("accounting_firm_id", current_user["id"])
                 .in_("status", ["CREATED", "PENDING_BORROWER_SIGNATURE"])
                 .execute(),
             error_msg="Failed to get pending actions count"
         )
+        logger.info(f"Pending actions: {pending_actions_result.count}")
         
+        logger.info("Getting processed deeds this month...")
         # Get processed deeds this month
         this_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         processed_this_month_result = await handle_supabase_operation(
             operation_name="get processed deeds this month",
-            operation=supabase.table("mortgage_data")
+            operation=supabase.table("mortgage_deeds")
                 .select("id", count="exact")
-                .eq("accounting_firm_id", current_user["id"])
                 .gte("created_at", this_month_start.isoformat())
                 .execute(),
             error_msg="Failed to get processed deeds count"
         )
+        logger.info(f"Processed this month: {processed_this_month_result.count}")
         
         # Calculate average processing time (mock data for now)
         avg_processing = "1.3 days"  # This would be calculated from actual data
         
         return {
-            "active_cooperatives": active_cooperatives_result.count or 0,
+            "active_cooperatives": total_cooperatives_result.count or 0,
             "pending_actions": pending_actions_result.count or 0,
             "processed_this_month": processed_this_month_result.count or 0,
             "avg_processing": avg_processing,
-            "accounting_firm_name": current_user.get("accounting_firm_name", "Unknown Firm")
+            "accounting_firm_name": current_user.get("user_name", "Unknown Firm")
         }
         
     except Exception as e:

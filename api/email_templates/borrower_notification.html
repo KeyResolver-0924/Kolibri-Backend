@@ -3,89 +3,358 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nytt Pantbrev Skapat</title>
+    <title>Digital Signering - Nytt Pantbrev</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
-            color: #333;
+            color: #2c3e50;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .email-container {
             max-width: 600px;
             margin: 0 auto;
-            padding: 20px;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
         }
+        
         .header {
-            background-color: #f8f9fa;
-            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
             text-align: center;
-            border-radius: 8px 8px 0 0;
+            position: relative;
         }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="white" opacity="0.1"/><circle cx="75" cy="75" r="1" fill="white" opacity="0.1"/><circle cx="50" cy="10" r="0.5" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+            opacity: 0.3;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+            position: relative;
+            z-index: 1;
+        }
+        
         .content {
-            background-color: #ffffff;
-            padding: 30px;
-            border: 1px solid #e9ecef;
+            padding: 40px 30px;
+            background: #ffffff;
         }
-        .footer {
-            background-color: #f8f9fa;
-            padding: 20px;
+        
+        .welcome-section {
             text-align: center;
-            border-radius: 0 0 8px 8px;
-            font-size: 12px;
-            color: #6c757d;
+            margin-bottom: 30px;
         }
+        
+        .welcome-section h2 {
+            color: #2c3e50;
+            font-size: 1.8em;
+            margin-bottom: 15px;
+        }
+        
+        .welcome-section p {
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+        
         .deed-info {
-            background-color: #f8f9fa;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 30px;
+            margin: 30px 0;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
         }
+        
         .deed-info h3 {
-            margin-top: 0;
-            color: #495057;
+            color: #2c3e50;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
         }
-        .deed-info p {
-            margin: 8px 0;
+        
+        .deed-info h3::before {
+            content: '📋';
+            margin-right: 10px;
+            font-size: 1.2em;
         }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+        
+        .info-item strong {
+            color: #667eea;
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .info-item span {
+            color: #2c3e50;
+            font-weight: 500;
+        }
+        
+        .important-notice {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 2px solid #f39c12;
+            padding: 25px;
+            border-radius: 15px;
+            margin: 30px 0;
+            position: relative;
+        }
+        
+        .important-notice::before {
+            content: '⚠️';
+            position: absolute;
+            top: -15px;
+            left: 20px;
+            background: #f39c12;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8em;
+        }
+        
+        .important-notice h4 {
+            color: #856404;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            margin-top: 10px;
+        }
+        
+        .important-notice p {
+            color: #856404;
+            font-weight: 500;
+        }
+        
+        .signing-section {
+            text-align: center;
+            margin: 40px 0;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            color: white;
+        }
+        
+        .signing-section h3 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+        }
+        
         .action-button {
             display: inline-block;
-            background-color: #007bff;
+            background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
             color: white;
-            padding: 12px 24px;
+            padding: 18px 40px;
             text-decoration: none;
-            border-radius: 6px;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 1.1em;
             margin: 20px 0;
+            box-shadow: 0 8px 25px rgba(0, 184, 148, 0.3);
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
         }
+        
         .action-button:hover {
-            background-color: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 12px 35px rgba(0, 184, 148, 0.4);
+            background: linear-gradient(135deg, #00a085 0%, #00b894 100%);
+        }
+        
+        .instructions {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            margin: 30px 0;
+        }
+        
+        .instructions h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .instructions h4::before {
+            content: '📝';
+            margin-right: 10px;
+        }
+        
+        .instructions ul {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .instructions li {
+            padding: 8px 0;
+            color: #7f8c8d;
+            position: relative;
+            padding-left: 25px;
+        }
+        
+        .instructions li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: #00b894;
+            font-weight: bold;
+        }
+        
+        .footer {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border-radius: 0 0 20px 20px;
+        }
+        
+        .footer p {
+            margin: 5px 0;
+            opacity: 0.8;
+        }
+        
+        .security-badge {
+            display: inline-block;
+            background: #00b894;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            margin: 10px 0;
+        }
+        
+        @media (max-width: 600px) {
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
         }
     </style>
 </head>
 <body>
+    <div class="email-container">
     <div class="header">
-        <h1>Nytt Pantbrev Skapat</h1>
-        <p>Hej {{ borrower_name }},</p>
+            <h1>📋 Digital Signering</h1>
+            <p>Hej {{ borrower_name }}, ditt pantbrev väntar på din signering</p>
     </div>
     
     <div class="content">
-        <p>Ett nytt pantbrev har skapats för din bostadsrätt. Nedan finns detaljerad information:</p>
+            <div class="welcome-section">
+                <h2>🎉 Nytt Pantbrev Skapat!</h2>
+                <p>Ett nytt pantbrev har skapats för din bostadsrätt. Du kan nu digitalt signera dokumentet för att slutföra processen.</p>
+            </div>
         
         <div class="deed-info">
             <h3>Pantbrevsinformation</h3>
-            <p><strong>Referensnummer:</strong> {{ deed.reference_number }}</p>
-            <p><strong>Lägenhetsnummer:</strong> {{ deed.apartment_number }}</p>
-            <p><strong>Adress:</strong> {{ deed.apartment_address }}</p>
-            <p><strong>Bostadsrättsförening:</strong> {{ deed.cooperative_name }}</p>
-            <p><strong>Belopp:</strong> {{ deed.amount }} SEK</p>
-            <p><strong>Skapat datum:</strong> {{ deed.created_date }}</p>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>Referensnummer</strong>
+                        <span>{{ deed.reference_number }}</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Lägenhetsnummer</strong>
+                        <span>{{ deed.apartment_number }}</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Adress</strong>
+                        <span>{{ deed.apartment_address }}</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Bostadsrättsförening</strong>
+                        <span>{{ deed.cooperative_name }}</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Belopp</strong>
+                        <span>{{ deed.amount }}</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Skapat datum</strong>
+                        <span>{{ deed.created_date }}</span>
+                    </div>
+                </div>
         </div>
         
-        <p><strong>Viktigt:</strong> Du kommer att få ytterligare instruktioner om signeringsprocessen inom kort.</p>
+        <div class="important-notice">
+            <h4>🚨 Viktigt: Digital Signering Krävs</h4>
+            <p>För att slutföra pantbrevet måste du digitalt signera dokumentet. Klicka på knappen nedan för att komma till säker signeringssidan.</p>
+        </div>
         
-        <p>Om du har några frågor, kontakta gärna din bank eller bostadsrättsföreningen.</p>
+            <div class="signing-section">
+                <h3>🔐 Säker Digital Signering</h3>
+                <p>Klicka på knappen nedan för att komma till den säkra signeringssidan</p>
+            <a href="{{ signing_url }}" class="action-button">
+                📝 Signera Pantbrev Digitalt
+            </a>
+        </div>
+        
+            <div class="instructions">
+                <h4>Viktiga Instruktioner</h4>
+        <ul>
+            <li>Länken är personlig och säker - dela den inte med andra</li>
+                    <li>Länken utgår om 7 dagar från nu</li>
+                    <li>Du kan bara signera en gång per pantbrev</li>
+            <li>Efter signering kommer bostadsrättsföreningen att få notifiering</li>
+                    <li>Kontrollera all information innan du signerar</li>
+                    <li>Om du har frågor, kontakta din bank eller bostadsrättsföreningen</li>
+        </ul>
+            </div>
     </div>
     
     <div class="footer">
         <p>Detta meddelande skickades automatiskt från {{ from_name }}</p>
+            <p>🔒 All kommunikation är säker och krypterad</p>
         <p>&copy; {{ current_year }} {{ from_name }}. Alla rättigheter förbehållna.</p>
+        </div>
     </div>
 </body>
 </html> 

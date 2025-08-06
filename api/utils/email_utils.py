@@ -32,10 +32,10 @@ async def send_email(
         bool: True if email was sent successfully, False otherwise
     """
     try:
-        logger.debug(f"Preparing to send email to {recipient_email}")
-        logger.debug(f"Using template: {template_name}")
-        logger.debug(f"Template context: {template_context}")
-        logger.debug(f"Mailgun settings - Domain: {settings.MAILGUN_DOMAIN}, From: {settings.EMAILS_FROM_EMAIL}")
+        logger.info(f"Starting email send process to {recipient_email}")
+        logger.info(f"Using template: {template_name}")
+        logger.info(f"Mailgun settings - Domain: {settings.MAILGUN_DOMAIN}, From: {settings.EMAILS_FROM_EMAIL}")
+        logger.info(f"Template context keys: {list(template_context.keys())}")
         
         # Add common template variables
         context = {
@@ -44,9 +44,11 @@ async def send_email(
             'current_year': datetime.now().year
         }
         
+        logger.info("Rendering email template...")
         # Render the HTML template
         html_content = render_template(template_name, context)
-        logger.debug("Successfully rendered email template")
+        logger.info("Successfully rendered email template")
+        logger.info(f"HTML content length: {len(html_content)} characters")
         
         # Prepare the email data
         data = {
@@ -55,21 +57,21 @@ async def send_email(
             "subject": subject,
             "html": html_content
         }
-        logger.debug(f"Prepared email data: {data}")
+        logger.info(f"Prepared email data - From: {data['from']}, To: {data['to']}, Subject: {data['subject']}")
         
         mailgun_url = f"https://api.mailgun.net/v3/{settings.MAILGUN_DOMAIN}/messages"
-        logger.debug(f"Using Mailgun URL: {mailgun_url}")
+        logger.info(f"Using Mailgun URL: {mailgun_url}")
         
         async with httpx.AsyncClient() as client:
-            logger.debug("Making request to Mailgun API")
+            logger.info("Making request to Mailgun API...")
             response = await client.post(
                 mailgun_url,
                 data=data,
                 auth=("api", settings.MAILGUN_API_KEY)
             )
             response_text = response.text
-            logger.debug(f"Mailgun API response status: {response.status_code}")
-            logger.debug(f"Mailgun API response: {response_text}")
+            logger.info(f"Mailgun API response status: {response.status_code}")
+            logger.info(f"Mailgun API response: {response_text}")
             
             if response.status_code == 200:
                 logger.info(f"Email sent successfully to {recipient_email}")

@@ -6,9 +6,11 @@ CREATE TABLE public.housing_cooperatives (
   city text NOT NULL,
   postal_code text NOT NULL,
   administrator_company text NULL,
-  administrator_name text NOT NULL,
-  administrator_person_number text NOT NULL,
-  administrator_email text NOT NULL,
+  administrator_name text NULL,
+  administrator_person_number text NULL,
+  administrator_email text NULL,
+  accounting_firm_name text NULL,
+  accounting_firm_email text NULL,
   created_by uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   CONSTRAINT housing_cooperatives_pkey PRIMARY KEY (id),
   CONSTRAINT housing_cooperatives_organisation_number_key UNIQUE (organisation_number)
@@ -75,6 +77,18 @@ CREATE TABLE public.housing_cooperative_signers (
 );
 CREATE INDEX IF NOT EXISTS idx_housing_cooperative_signers_mortgage_deed_id ON public.housing_cooperative_signers USING btree (mortgage_deed_id);
 
+CREATE TABLE public.accounting_firm_signers (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  mortgage_deed_id bigint NOT NULL,
+  accounting_firm_name text NOT NULL,
+  accounting_firm_email text NOT NULL,
+  signature_timestamp timestamp with time zone NULL,
+  CONSTRAINT accounting_firm_signers_pkey PRIMARY KEY (id),
+  CONSTRAINT accounting_firm_signers_mortgage_deed_id_fkey FOREIGN KEY (mortgage_deed_id) REFERENCES public.mortgage_deeds(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_accounting_firm_signers_mortgage_deed_id ON public.accounting_firm_signers USING btree (mortgage_deed_id);
+
+
 CREATE TABLE public.bank_users (
   id uuid NOT NULL PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email text NOT NULL,
@@ -92,6 +106,7 @@ ALTER TABLE public.mortgage_deeds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.borrowers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.housing_cooperative_signers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.accounting_firm_signers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bank_users ENABLE ROW LEVEL SECURITY;
 
 -- Housing Cooperatives - Allow users to access their own cooperatives
@@ -124,6 +139,10 @@ CREATE POLICY "Allow all operations for authenticated users" ON public.borrowers
 CREATE POLICY "Allow all operations for authenticated users" ON public.housing_cooperative_signers
   FOR ALL USING (auth.role() = 'authenticated');
 
+-- Accounting Firm Signers - Allow all operations for authenticated users
+CREATE POLICY "Allow all operations for authenticated users" ON public.accounting_firm_signers
+  FOR ALL USING (auth.role() = 'authenticated');
+
 -- Bank Users - RLS Policies
 DROP POLICY IF EXISTS "Users can only access their own records" ON public.bank_users;
 DROP POLICY IF EXISTS "Allow inserts during signup" ON public.bank_users;
@@ -153,3 +172,37 @@ CREATE TABLE public.mortgage_deeds (
   CONSTRAINT unique_credit_number UNIQUE (credit_number),
   CONSTRAINT mortgage_deeds_housing_cooperative_id_fkey FOREIGN KEY (housing_cooperative_id) REFERENCES public.housing_cooperatives(id) ON DELETE RESTRICT
 );
+
+CREATE TABLE public.signing_tokens (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  deed_id bigint NOT NULL,
+  borrower_id bigint NULL,  -- Nullable for housing cooperative signers
+  housing_cooperative_signer_id bigint NULL,  -- New field for housing cooperative signers
+  signer_type text NOT NULL DEFAULT 'borrower',  -- New field to distinguish signer types
+  token text NOT NULL UNIQUE,
+  email text NOT NULL,
+  expires_at timestamp with time zone NOT NULL,
+  used_at timestamp with time zone NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT signing_tokens_pkey PRIMARY KEY (id),
+  CONSTRAINT signing_tokens_deed_id_fkey FOREIGN KEY (deed_id) REFERENCES public.mortgage_deeds(id) ON DELETE CASCADE,
+  CONSTRAINT signing_tokens_borrower_id_fkey FOREIGN KEY (borrower_id) REFERENCES public.borrowers(id) ON DELETE CASCADE,
+  CONSTRAINT signing_tokens_housing_cooperative_signer_id_fkey FOREIGN KEY (housing_cooperative_signer_id) REFERENCES public.housing_cooperative_signers(id) ON DELETE CASCADE,
+  CONSTRAINT signing_tokens_signer_check CHECK (
+    (signer_type = 'borrower' AND borrower_id IS NOT NULL AND housing_cooperative_signer_id IS NULL) OR
+    (signer_type = 'housing_cooperative_signer' AND housing_cooperative_signer_id IS NOT NULL AND borrower_id IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_signing_tokens_token ON public.signing_tokens USING btree (token);
+CREATE INDEX IF NOT EXISTS idx_signing_tokens_email ON public.signing_tokens USING btree (email);
+
+-- Enable RLS on signing_tokens table
+ALTER TABLE public.signing_tokens ENABLE ROW LEVEL SECURITY;
+
+-- Signing Tokens - Allow authenticated users to access
+CREATE POLICY "Allow authenticated users to access signing tokens" ON public.signing_tokens
+  FOR ALL USING (auth.role() = 'authenticated');
+
+-- Signing Tokens - Allow public access for reading tokens (needed for signing process)
+CREATE POLICY "Allow public access for reading signing tokens" ON public.signing_tokens
+  FOR SELECT USING (true);

@@ -195,56 +195,60 @@
 </head>
 <body>
     <div class="container">
-    <div class="header">
+        <div class="header">
             <h1>🏢 Nytt Pantbrev Skapat</h1>
             <p>Digital Signering för Bostadsrättsförening</p>
-    </div>
-    
-    <div class="content">
+        </div>
+        
+        <div class="content">
             <div class="welcome-section">
-                <h2>Hej {{ admin_name }}!</h2>
+                <h2>Hej Test Administrator!</h2>
                 <p>Ett nytt pantbrev har skapats för din bostadsrättsförening och väntar på din digitala signering.</p>
             </div>
-        
-        <div class="deed-info">
-            <h3>Pantbrevsinformation</h3>
-            <p><strong>Referensnummer:</strong> {{ deed.reference_number }}</p>
-            <p><strong>Lägenhetsnummer:</strong> {{ deed.apartment_number }}</p>
-            <p><strong>Adress:</strong> {{ deed.apartment_address }}</p>
-            <p><strong>Bostadsrättsförening:</strong> {{ deed.cooperative_name }}</p>
-            <p><strong>Skapat datum:</strong> {{ deed.created_date }}</p>
-        </div>
-        
-        <div class="borrowers-list">
-            <h4>Låntagare</h4>
-            <ul>
-                {% for borrower in deed.borrowers %}
-                <li>{{ borrower.name }} ({{ borrower.email }})</li>
-                {% endfor %}
-            </ul>
-        </div>
+            
+            <div class="deed-info">
+                <h3>Pantbrevsinformation</h3>
+                <p><strong>Referensnummer:</strong> TEST123</p>
+                <p><strong>Lägenhetsnummer:</strong> A1</p>
+                <p><strong>Adress:</strong> Test Address 1</p>
+                <p><strong>Bostadsrättsförening:</strong> Test Cooperative</p>
+                <p><strong>Skapat datum:</strong> 2024-01-01</p>
+            </div>
+            
+            <div class="borrowers-list">
+                <h4>Låntagare</h4>
+                <ul>
+                    
+                    <li>Test Borrower (test@example.com)</li>
+                    
+                </ul>
+            </div>
             
             <div class="signing-section">
                 <h3>Digital Signering</h3>
                 <p>Klicka på knappen nedan för att signera pantbrevet digitalt på ett säkert sätt.</p>
-                <a href="{{ signing_url }}" class="sign-button" style="display: inline-block; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 18px 36px; text-decoration: none; border-radius: 50px; font-size: 18px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 8px 25px rgba(40, 167, 69, 0.3); transition: all 0.3s ease; border: none; cursor: pointer;">
+                <a href="http://localhost:8080/sign/test-token-123" class="sign-button" style="display: inline-block; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 18px 36px; text-decoration: none; border-radius: 50px; font-size: 18px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 8px 25px rgba(40, 167, 69, 0.3); transition: all 0.3s ease; border: none; cursor: pointer;">
                     📝 Signera Pantbrev Digitalt
                 </a>
+                <p style="margin-top: 15px; font-size: 14px; color: #6c757d;">
+                    <strong>Alternativt:</strong> Kopiera och klistra in denna länk i din webbläsare:<br>
+                    <a href="http://localhost:8080/sign/test-token-123" style="color: #007bff; text-decoration: underline;">http://localhost:8080/sign/test-token-123</a>
+                </p>
             </div>
             
             <div class="security-note">
                 <h4>Säker Digital Signering</h4>
                 <p>Din signering är säker och krypterad. Länken är unik för dig och går ut om 7 dagar.</p>
             </div>
+            
+            <p><strong>Viktigt:</strong> Du kommer att få ytterligare instruktioner om godkännandeprocessen inom kort.</p>
+            
+            <p>Om du har några frågor, kontakta gärna den ansvariga banken.</p>
+        </div>
         
-        <p><strong>Viktigt:</strong> Du kommer att få ytterligare instruktioner om godkännandeprocessen inom kort.</p>
-        
-        <p>Om du har några frågor, kontakta gärna den ansvariga banken.</p>
-    </div>
-    
-    <div class="footer">
-        <p>Detta meddelande skickades automatiskt från {{ from_name }}</p>
-        <p>&copy; {{ current_year }} {{ from_name }}. Alla rättigheter förbehållna.</p>
+        <div class="footer">
+            <p>Detta meddelande skickades automatiskt från Mortgage Deed System</p>
+            <p>&copy; 2024 Mortgage Deed System. Alla rättigheter förbehållna.</p>
         </div>
     </div>
 </body>
