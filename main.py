@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 import logging
 import sys
@@ -63,6 +63,12 @@ app.add_middleware(
 
 # Add response logging middleware
 app.middleware("http")(log_response_middleware)
+
+# Redirect route for signing URLs
+@app.get("/sign/{token}")
+async def redirect_to_signing_page(token: str):
+    """Redirect /sign/{token} to the proper API endpoint."""
+    return RedirectResponse(url=f"/api/signing/sign/{token}")
 
 # Security headers middleware
 @app.middleware("http")
@@ -133,7 +139,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Include your routers with proper prefixes and tags
 app.include_router(mortgage_deeds.router, prefix="/api/mortgage-deeds", tags=["mortgage-deeds"])
 app.include_router(housing_cooperative.router, prefix="/api/housing-cooperatives", tags=["housing-cooperatives"])
-app.include_router(signing.router, prefix="/api/mortgage-deeds", tags=["signing"])
+app.include_router(signing.router, prefix="/api/signing", tags=["signing"])
 app.include_router(statistics.router, prefix="/api/statistics", tags=["statistics"])
 app.include_router(audit_logs.router, prefix="/api", tags=["audit-logs"])
 

@@ -57,6 +57,15 @@ class HousingCooperativeSignerResponse(HousingCooperativeSignerCreate):
     mortgage_deed_id: int
     signature_timestamp: Optional[datetime] 
 
+class AccountingFirmSignerCreate(BaseModel):
+    accounting_firm_name: str
+    accounting_firm_email: str
+
+class AccountingFirmSignerResponse(AccountingFirmSignerCreate):
+    id: int
+    mortgage_deed_id: int
+    signature_timestamp: Optional[datetime] = None
+
 class MortgageDeedCreate(BaseModel):
     credit_number: str
     credit_numbers: List[str]
@@ -78,6 +87,8 @@ class MortgageDeedCreate(BaseModel):
     apartment_number: str
     apartment_postal_code: str
     apartment_city: str
+    accounting_firm_name: Optional[str] = None
+    accounting_firm_email: Optional[str] = None
 
 
 class HousingCooperativeResponse(BaseModel):
@@ -106,6 +117,7 @@ class MortgageDeedResponse(BaseModel):
     bank_id: int
     borrowers: List[BorrowerResponse]
     housing_cooperative_signers: List[HousingCooperativeSignerResponse]
+    accounting_firm_signers: List[AccountingFirmSignerResponse]
 
 class MortgageDeedUpdate(BaseModel):
     apartment_address: Optional[str] = None

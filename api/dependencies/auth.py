@@ -31,17 +31,22 @@ async def get_current_user(
             
         # Convert User object to dict with all necessary attributes
         user = user_response.user
+        user_metadata = user.user_metadata or {}
+        app_metadata = user.app_metadata or {}
+        
         return {
             "id": user.id,
             "email": user.email,
             "phone": user.phone,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
-            "user_metadata": user.user_metadata or {},
-            "app_metadata": user.app_metadata or {},
+            "user_metadata": user_metadata,
+            "app_metadata": app_metadata,
             "aud": user.aud,
-            "role": user.role,
-            "bank_id": user.user_metadata.get("bank_id")
+            "role": user_metadata.get("role") or user.role,  # Try user_metadata first, then fallback to user.role
+            "bank_id": user_metadata.get("bank_id"),
+            "bank_name": user_metadata.get("bank_name"),
+            "user_name": user_metadata.get("user_name")
         }
                 
     except Exception as e:
@@ -69,17 +74,22 @@ async def get_optional_user(
             return None
             
         user = user_response.user
+        user_metadata = user.user_metadata or {}
+        app_metadata = user.app_metadata or {}
+        
         return {
             "id": user.id,
             "email": user.email,
             "phone": user.phone,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
-            "user_metadata": user.user_metadata or {},
-            "app_metadata": user.app_metadata or {},
+            "user_metadata": user_metadata,
+            "app_metadata": app_metadata,
             "aud": user.aud,
-            "role": user.role,
-            "bank_id": user.user_metadata.get("bank_id")
+            "role": user_metadata.get("role") or user.role,  # Try user_metadata first, then fallback to user.role
+            "bank_id": user_metadata.get("bank_id"),
+            "bank_name": user_metadata.get("bank_name"),
+            "user_name": user_metadata.get("user_name")
         }
     except:
         return None 

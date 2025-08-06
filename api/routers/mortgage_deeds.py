@@ -2,6 +2,7 @@
 from datetime import datetime
 import logging
 from typing import List, Optional
+from decimal import Decimal
 
 # FastAPI imports
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -12,9 +13,10 @@ from api.config import get_supabase, get_settings
 from api.dependencies.auth import get_current_user
 from api.schemas.mortgage_deed import (
     MortgageDeedCreate,
-    MortgageDeedUpdate)
+    MortgageDeedUpdate,
+    MortgageDeedResponse)
 from api.utils.audit import create_audit_log
-from api.utils.supabase_utils import handle_supabase_operation
+from api.utils.supabase_utils import handle_supabase_operation, convert_decimals_to_float
 from api.utils.email_utils import send_email
 from supabase._async.client import AsyncClient as SupabaseClient
 
@@ -31,13 +33,24 @@ router = APIRouter(
     }
 )
 
+def deep_convert_decimals(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {k: deep_convert_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [deep_convert_decimals(i) for i in obj]
+    else:
+        return obj
+
 async def send_mortgage_deed_notifications(
     deed_id: int,
     supabase: SupabaseClient,
     settings
 ) -> bool:
     """
-    Send notifications to borrowers and housing cooperatives after mortgage deed creation.
+    Send notifications to housing cooperatives after mortgage deed creation.
+    Note: Borrower notifications are sent separately in the main creation function.
     
     Args:
         deed_id: ID of the created mortgage deed
@@ -51,7 +64,7 @@ async def send_mortgage_deed_notifications(
         # Fetch the created deed with all related data
         deed_result = await handle_supabase_operation(
             operation_name=f"fetch created deed {deed_id}",
-            operation=supabase.table("mortgage_data").select(
+            operation=supabase.table("mortgage_deeds").select(
                 "*, borrowers(*), housing_cooperatives(*)"
             ).eq("id", deed_id).single().execute(),
             error_msg="Failed to fetch created deed details"
@@ -60,59 +73,41 @@ async def send_mortgage_deed_notifications(
         deed = deed_result.data
         all_emails_sent = True
         
-        # Send notifications to borrowers
-        for borrower in deed.get("borrowers", []):
-            context = {
-                "borrower_name": borrower.get('name', ''),
-                "deed": {
-                    "reference_number": deed.get("credit_number", ""),
-                    "apartment_number": deed.get("apartment_number", ""),
-                    "apartment_address": deed.get("apartment_address", ""),
-                    "cooperative_name": deed.get("housing_cooperative_name", ""),
-                    "amount": deed.get("amount", 0),
-                    "created_date": deed.get("created_at", "")
-                },
-                "from_name": settings.EMAILS_FROM_NAME
-            }
-            
-            success = await send_email(
-                recipient_email=borrower.get("email", ""),
-                subject="Nytt pantbrev skapat - Action Required",
-                template_name="borrower_notification.html",
-                template_context=context,
-                settings=settings
-            )
-            
-            if not success:
-                all_emails_sent = False
-                logger.error(f"Failed to send email to borrower {borrower.get('email', '')}")
+        # Skip borrower notifications - they are sent separately in the main function
+        # to avoid duplicate emails
         
         # Send notification to housing cooperative administrator
         if deed.get("housing_cooperative_id"):
-            coop_context = {
-                "admin_name": deed.get("administrator_name", ""),
-                "deed": {
-                    "reference_number": deed.get("credit_number", ""),
-                    "apartment_number": deed.get("apartment_number", ""),
-                    "apartment_address": deed.get("apartment_address", ""),
-                    "cooperative_name": deed.get("housing_cooperative_name", ""),
-                    "borrowers": deed.get("borrowers", []),
-                    "created_date": deed.get("created_at", "")
-                },
-                "from_name": settings.EMAILS_FROM_NAME
-            }
-            
-            success = await send_email(
-                recipient_email=deed.get("administrator_email", ""),
-                subject="Nytt pantbrev skapat - Bostadsrättsförening",
-                template_name="cooperative_notification.html",
-                template_context=coop_context,
-                settings=settings
-            )
-            
-            if not success:
+            try:
+                coop_context = {
+                    "admin_name": deed.get("administrator_name", ""),
+                    "deed": {
+                        "reference_number": deed.get("credit_number", ""),
+                        "apartment_number": deed.get("apartment_number", ""),
+                        "apartment_address": deed.get("apartment_address", ""),
+                        "cooperative_name": deed.get("housing_cooperative_name", ""),
+                        "borrowers": deed.get("borrowers", []),
+                        "created_date": deed.get("created_at", "")
+                    },
+                    "from_name": settings.EMAILS_FROM_NAME
+                }
+                
+                success = await send_email(
+                    recipient_email=deed.get("administrator_email", ""),
+                    subject="Nytt pantbrev skapat - Bostadsrättsförening",
+                    template_name="cooperative_notification.html",
+                    template_context=coop_context,
+                    settings=settings
+                )
+                
+                if not success:
+                    all_emails_sent = False
+                    logger.error(f"Failed to send email to cooperative administrator {deed.get('administrator_email', '')}")
+                else:
+                    logger.info(f"Successfully sent email to cooperative administrator {deed.get('administrator_email', '')}")
+            except Exception as e:
+                logger.error(f"Error sending email to cooperative administrator: {str(e)}")
                 all_emails_sent = False
-                logger.error(f"Failed to send email to cooperative administrator {deed.get('administrator_email', '')}")
         
         return all_emails_sent
         
@@ -157,49 +152,366 @@ async def create_mortgage_deed(
     try:
         logger.info(f"Creating mortgage deed for user: {current_user.get('id')}")
         logger.info(f"Deed data: {deed.model_dump()}")
-        deed_data = deed.model_dump()
         
-        # Transform the data
-        try:
-            transformed_data = transform_deed_data(deed)
-            logger.info(f"Transformed data: {transformed_data}")
-        except Exception as e:
-            logger.error(f"Error transforming deed data: {str(e)}")
+        bank_id = current_user.get("bank_id")
+        if not bank_id:
+            logger.error("No bank_id found in user metadata")
             raise HTTPException(
                 status_code=400,
-                detail=f"Failed to transform deed data: {str(e)}"
-            )
-
-        # Create the mortgage deed
-        try:
-            deed_result = await handle_supabase_operation(
-                operation_name="create mortgage deed",
-                operation=supabase.table("mortgage_data").insert({
-                    **transformed_data,
-                    "created_by": current_user["id"],
-                }).execute(),
-                error_msg="Failed to create mortgage deed"
-            )
-            logger.info(f"Mortgage deed created successfully: {deed_result.data}")
-        except Exception as e:
-            logger.error(f"Error creating mortgage deed in database: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create mortgage deed in database: {str(e)}"
+                detail="Bank ID not found in user profile"
             )
         
-        # Get the created deed ID
+        deed_data = deep_convert_decimals(deed.model_dump())
+        
+        # Handle housing cooperative creation if needed
+        housing_cooperative_id = deed_data["housing_cooperative_id"]
+        if housing_cooperative_id == 0:
+            # Create housing cooperative first
+            housing_cooperative_data = {
+                "organisation_number": deed_data["organization_number"],
+                "name": deed_data["cooperative_name"],
+                "address": deed_data["cooperative_address"],
+                "postal_code": deed_data["cooperative_postal_code"],
+                "city": deed_data["cooperative_city"],
+                "administrator_name": deed_data.get("cooperative_name", ""),
+                "administrator_person_number": "",  # Will be filled by signers
+                "administrator_email": "",  # Will be filled by signers
+                "created_by": current_user["id"]
+            }
+            
+            logger.info(f"Creating housing cooperative: {housing_cooperative_data}")
+            housing_coop_result = await handle_supabase_operation(
+                operation_name="create housing cooperative",
+                operation=supabase.table("housing_cooperatives").insert(housing_cooperative_data).execute(),
+                error_msg="Failed to create housing cooperative"
+            )
+            
+            if not housing_coop_result.data or len(housing_coop_result.data) == 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create housing cooperative"
+                )
+            
+            housing_cooperative_id = housing_coop_result.data[0]["id"]
+            logger.info(f"Created housing cooperative with ID: {housing_cooperative_id}")
+        
+        mortgage_deed_data = {
+            "credit_number": deed_data["credit_number"],
+            "housing_cooperative_id": housing_cooperative_id,
+            "apartment_address": deed_data["apartment_address"],
+            "apartment_postal_code": deed_data["apartment_postal_code"],
+            "apartment_city": deed_data["apartment_city"],
+            "apartment_number": deed_data["apartment_number"],
+            "status": "CREATED",
+            "bank_id": int(bank_id),
+            "created_by": current_user["id"],
+            "created_by_email": current_user.get("email", "")
+        }
+        logger.info(f"Inserting mortgage_deed_data: {mortgage_deed_data}")
+        deed_result = await handle_supabase_operation(
+            operation_name="create mortgage deed",
+            operation=supabase.table("mortgage_deeds").insert(mortgage_deed_data).execute(),
+            error_msg="Failed to create mortgage deed"
+        )
         if not deed_result.data or len(deed_result.data) == 0:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to get created deed ID"
             )
-        
         created_deed_id = deed_result.data[0]["id"]
         logger.info(f"Created deed ID: {created_deed_id}")
         
-        # Send notifications to all parties
+        if deed_data.get("borrowers"):
+            borrowers_data = []
+            for borrower in deed_data["borrowers"]:
+                borrowers_data.append({
+                    "deed_id": created_deed_id,
+                    "name": borrower["name"],
+                    "person_number": borrower["person_number"],
+                    "email": borrower["email"],
+                    "ownership_percentage": float(borrower["ownership_percentage"])
+                })
+            borrowers_data = deep_convert_decimals(borrowers_data)
+            logger.info(f"Inserting borrowers_data: {borrowers_data}")
+            await handle_supabase_operation(
+                operation_name="create borrowers",
+                operation=supabase.table("borrowers").insert(borrowers_data).execute(),
+                error_msg="Failed to create borrowers"
+            )
+        
+        if deed_data.get("housing_cooperative_signers"):
+            signers_data = []
+            for signer in deed_data["housing_cooperative_signers"]:
+                signers_data.append({
+                    "mortgage_deed_id": created_deed_id,
+                    "administrator_name": signer["administrator_name"],
+                    "administrator_person_number": signer["administrator_person_number"],
+                    "administrator_email": signer["administrator_email"]
+                })
+            signers_data = deep_convert_decimals(signers_data)
+            logger.info(f"Inserting signers_data: {signers_data}")
+            await handle_supabase_operation(
+                operation_name="create housing cooperative signers",
+                operation=supabase.table("housing_cooperative_signers").insert(signers_data).execute(),
+                error_msg="Failed to create housing cooperative signers"
+            )
+            
+            # Also update the housing_cooperatives table with administrator information from the first signer
+            if housing_cooperative_id and signers_data and not deed_data.get("is_accounting_firm"):
+                try:
+                    first_signer = signers_data[0]
+                    await handle_supabase_operation(
+                        operation_name="update housing cooperative with administrator info",
+                        operation=supabase.table("housing_cooperatives")
+                            .update({
+                                "administrator_name": first_signer["administrator_name"],
+                                "administrator_person_number": first_signer["administrator_person_number"],
+                                "administrator_email": first_signer["administrator_email"]
+                            })
+                            .eq("id", housing_cooperative_id)
+                            .execute(),
+                        error_msg="Failed to update housing cooperative with administrator info"
+                    )
+                    logger.info(f"Updated housing cooperative {housing_cooperative_id} with administrator info")
+                except Exception as e:
+                    logger.error(f"Error updating housing cooperative with administrator info: {str(e)}")
+                    # Don't fail the entire operation if this update fails
+        
+        # Handle accounting firm signers if is_accounting_firm is true
+        logger.info(f"Checking accounting firm data: is_accounting_firm={deed_data.get('is_accounting_firm')}, name={deed_data.get('accounting_firm_name')}, email={deed_data.get('accounting_firm_email')}")
+        
+        if deed_data.get("is_accounting_firm") and deed_data.get("accounting_firm_name") and deed_data.get("accounting_firm_email"):
+            try:
+                accounting_firm_data = {
+                    "mortgage_deed_id": created_deed_id,
+                    "accounting_firm_name": deed_data["accounting_firm_name"],
+                    "accounting_firm_email": deed_data["accounting_firm_email"]
+                }
+                accounting_firm_data = deep_convert_decimals(accounting_firm_data)
+                logger.info(f"Inserting accounting_firm_data: {accounting_firm_data}")
+                
+                await handle_supabase_operation(
+                    operation_name="create accounting firm signers",
+                    operation=supabase.table("accounting_firm_signers").insert(accounting_firm_data).execute(),
+                    error_msg="Failed to create accounting firm signers"
+                )
+                logger.info("Successfully created accounting firm signer")
+
+                # Also update the housing_cooperatives table with accounting firm information
+                if housing_cooperative_id:
+                    try:
+                        await handle_supabase_operation(
+                            operation_name="update housing cooperative with accounting firm info",
+                            operation=supabase.table("housing_cooperatives")
+                                .update({
+                                    "accounting_firm_name": deed_data["accounting_firm_name"],
+                                    "accounting_firm_email": deed_data["accounting_firm_email"]
+                                })
+                                .eq("id", housing_cooperative_id)
+                                .execute(),
+                            error_msg="Failed to update housing cooperative with accounting firm info"
+                        )
+                        logger.info(f"Updated housing cooperative {housing_cooperative_id} with accounting firm info")
+                    except Exception as e:
+                        logger.error(f"Error updating housing cooperative with accounting firm info: {str(e)}")
+                        # Don't fail the entire operation if this update fails
+            except Exception as e:
+                logger.error(f"Error creating accounting firm signer: {str(e)}")
+                # Don't fail the entire operation if this fails
+        else:
+            logger.info("Skipping accounting firm signer creation - conditions not met")
+
+        # Create signing tokens for borrowers and send email notifications
+        if deed_data.get("borrowers"):
+            from datetime import timedelta
+            import secrets
+            
+            logger.info(f"Processing {len(deed_data['borrowers'])} borrowers for signing tokens")
+            
+            for borrower in deed_data["borrowers"]:
+                logger.info(f"Processing borrower: {borrower['name']} ({borrower['email']})")
+                
+                # Generate unique signing token
+                token = secrets.token_urlsafe(32)
+                expires_at = datetime.now() + timedelta(days=7)  # Token expires in 7 days
+                
+                logger.info(f"Generated token for borrower {borrower['email']}: {token[:10]}...")
+                
+                # Get borrower ID from the inserted borrower
+                borrower_result = await handle_supabase_operation(
+                    operation_name="fetch borrower by email and deed",
+                    operation=supabase.table("borrowers")
+                        .select("id")
+                        .eq("deed_id", created_deed_id)
+                        .eq("email", borrower["email"])
+                        .single()
+                        .execute(),
+                    error_msg="Failed to fetch borrower ID"
+                )
+                
+                if borrower_result.data:
+                    borrower_id = borrower_result.data["id"]
+                    logger.info(f"Found borrower ID: {borrower_id}")
+                    
+                    # Create signing token
+                    signing_token_data = {
+                        "deed_id": created_deed_id,
+                        "borrower_id": borrower_id,
+                        "signer_type": "borrower",
+                        "token": token,
+                        "email": borrower["email"],
+                        "expires_at": expires_at.isoformat()
+                    }
+                    
+                    logger.info(f"Creating signing token with data: {signing_token_data}")
+                    
+                    try:
+                        await handle_supabase_operation(
+                            operation_name="create signing token",
+                            operation=supabase.table("signing_tokens").insert(signing_token_data).execute(),
+                            error_msg="Failed to create signing token"
+                        )
+                        logger.info(f"Successfully created signing token for borrower {borrower['email']}")
+                    except Exception as e:
+                        logger.error(f"Failed to create signing token for borrower {borrower['email']}: {str(e)}")
+                        # Don't fail the entire operation if signing token creation fails
+                        # Continue with email sending even if token creation failed
+                    
+                    # Send email notification with signing link
+                    signing_url = f"{settings.BACKEND_URL}/sign/{token}"
+                    context = {
+                        "borrower_name": borrower["name"],
+                        "deed": {
+                            "reference_number": deed_data["credit_number"],
+                            "apartment_number": deed_data["apartment_number"],
+                            "apartment_address": deed_data["apartment_address"],
+                            "cooperative_name": deed_data.get("cooperative_name", ""),
+                            "amount": "To be determined",
+                            "created_date": datetime.now().strftime("%Y-%m-%d")
+                        },
+                        "signing_url": signing_url,
+                        "from_name": settings.EMAILS_FROM_NAME,
+                        "current_year": datetime.now().year
+                    }
+                    
+                    logger.info(f"Preparing to send email to {borrower['email']}")
+                    logger.info(f"Email context: {context}")
+                    logger.info(f"Signing URL: {signing_url}")
+                    
+                    success = await send_email(
+                        recipient_email=borrower["email"],
+                        subject="Nytt Pantbrev Skapat - Digital Signering",
+                        template_name="borrower_notification.html",
+                        template_context=context,
+                        settings=settings
+                    )
+                    
+                    if not success:
+                        logger.error(f"Failed to send signing email to borrower {borrower['email']}")
+                        # Don't fail the entire operation if email fails
+                    else:
+                        logger.info(f"Successfully sent signing email to borrower {borrower['email']}")
+                else:
+                    logger.error(f"Could not find borrower ID for email {borrower['email']}")
+        else:
+            logger.warning("No borrowers found in deed data")
+        
+        # Send email notifications to housing cooperative signers
+        if deed_data.get("housing_cooperative_signers"):
+            logger.info(f"Processing {len(deed_data['housing_cooperative_signers'])} housing cooperative signers for email notifications")
+            
+            for signer in deed_data["housing_cooperative_signers"]:
+                logger.info(f"Processing housing cooperative signer: {signer['administrator_name']} ({signer['administrator_email']})")
+                
+                # Generate unique signing token for housing cooperative signer
+                token = secrets.token_urlsafe(32)
+                expires_at = datetime.now() + timedelta(days=7)  # Token expires in 7 days
+                
+                logger.info(f"Generated token for housing cooperative signer {signer['administrator_email']}: {token[:10]}...")
+                
+                # Get housing cooperative signer ID from the inserted signer
+                signer_result = await handle_supabase_operation(
+                    operation_name="fetch housing cooperative signer by email and deed",
+                    operation=supabase.table("housing_cooperative_signers")
+                        .select("id")
+                        .eq("mortgage_deed_id", created_deed_id)
+                        .eq("administrator_email", signer["administrator_email"])
+                        .single()
+                        .execute(),
+                    error_msg="Failed to fetch housing cooperative signer ID"
+                )
+                
+                if signer_result.data:
+                    signer_id = signer_result.data["id"]
+                    logger.info(f"Found housing cooperative signer ID: {signer_id}")
+                    
+                    # Create signing token for housing cooperative signer
+                    signing_token_data = {
+                        "deed_id": created_deed_id,
+                        "housing_cooperative_signer_id": signer_id,
+                        "signer_type": "housing_cooperative_signer",
+                        "token": token,
+                        "email": signer["administrator_email"],
+                        "expires_at": expires_at.isoformat()
+                    }
+                    
+                    logger.info(f"Creating signing token for housing cooperative signer with data: {signing_token_data}")
+                    
+                    try:
+                        await handle_supabase_operation(
+                            operation_name="create signing token for housing cooperative signer",
+                            operation=supabase.table("signing_tokens").insert(signing_token_data).execute(),
+                            error_msg="Failed to create signing token for housing cooperative signer"
+                        )
+                        logger.info(f"Successfully created signing token for housing cooperative signer {signer['administrator_email']}")
+                    except Exception as e:
+                        logger.error(f"Failed to create signing token for housing cooperative signer {signer['administrator_email']}: {str(e)}")
+                        # Don't fail the entire operation if signing token creation fails
+                        # Continue with email sending even if token creation failed
+                    
+                    # Send email notification with signing link
+                    signing_url = f"{settings.BACKEND_URL}/sign/{token}"
+                    coop_context = {
+                        "admin_name": signer["administrator_name"],
+                        "deed": {
+                            "reference_number": deed_data["credit_number"],
+                            "apartment_number": deed_data["apartment_number"],
+                            "apartment_address": deed_data["apartment_address"],
+                            "cooperative_name": deed_data.get("cooperative_name", ""),
+                            "borrowers": deed_data.get("borrowers", []),
+                            "created_date": datetime.now().strftime("%Y-%m-%d")
+                        },
+                        "signing_url": signing_url,
+                        "from_name": settings.EMAILS_FROM_NAME,
+                        "current_year": datetime.now().year
+                    }
+                    
+                    logger.info(f"Preparing to send email to housing cooperative signer {signer['administrator_email']}")
+                    logger.info(f"Email context: {coop_context}")
+                    logger.info(f"Signing URL: {signing_url}")
+                    
+                    success = await send_email(
+                        recipient_email=signer["administrator_email"],
+                        subject="Nytt pantbrev skapat - Digital Signering",
+                        template_name="cooperative_notification.html",
+                        template_context=coop_context,
+                        settings=settings
+                    )
+                    
+                    if not success:
+                        logger.error(f"Failed to send email to housing cooperative signer {signer['administrator_email']}")
+                        # Don't fail the entire operation if email fails
+                    else:
+                        logger.info(f"Successfully sent email to housing cooperative signer {signer['administrator_email']}")
+                else:
+                    logger.error(f"Could not find housing cooperative signer ID for email {signer['administrator_email']}")
+        else:
+            logger.warning("No housing cooperative signers found in deed data")
+        
+        # Handle notifications separately to avoid failing the entire operation
+        notifications_sent = False
         try:
+            # Only send notifications to housing cooperative, not to borrowers (already sent above)
             notifications_sent = await send_mortgage_deed_notifications(
                 created_deed_id,
                 supabase,
@@ -209,20 +521,19 @@ async def create_mortgage_deed(
         except Exception as e:
             logger.error(f"Error sending notifications: {str(e)}")
             notifications_sent = False
+            # Don't fail the entire operation if notifications fail
         
-        # Create audit log for deed creation
         try:
             await create_audit_log(
                 supabase,
                 created_deed_id,
                 "DEED_CREATED",
                 current_user["id"],
-                f"Created mortgage deed {created_deed_id} for apartment {transformed_data.get('apartment_info', {}).get('apartment_number', '')} at {transformed_data.get('apartment_info', {}).get('apartment_address', '')}"
+                f"Created mortgage deed {created_deed_id} for apartment {deed_data.get('apartment_number', '')} at {deed_data.get('apartment_address', '')}"
             )
         except Exception as e:
             logger.error(f"Error creating audit log: {str(e)}")
         
-        # Create audit log for notifications
         try:
             if notifications_sent:
                 await create_audit_log(
@@ -251,7 +562,6 @@ async def create_mortgage_deed(
         }
         
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
         logger.error(f"Unexpected error in create_mortgage_deed: {str(e)}", exc_info=True)
@@ -260,316 +570,262 @@ async def create_mortgage_deed(
             detail=f"An unexpected error occurred: {str(e)}"
         )
 
-def transform_deed_data(input_data: MortgageDeedCreate):
+
+
+@router.get(
+    "",
+    response_model=List[MortgageDeedResponse],
+    summary="List and filter mortgage deeds",
+    description="""
+    Retrieves a list of mortgage deeds with optional filtering and sorting.
+    
+    Supports filtering by:
+    - Status
+    - Housing cooperative
+    - Creation date range
+    - Borrower's person number
+    - Housing cooperative name
+    - Apartment number
+    - Credit numbers (comma-separated list)
+    
+    Results are paginated and include pagination headers:
+    - X-Total-Count: Total number of records
+    - X-Total-Pages: Total number of pages
+    - X-Current-Page: Current page number
+    - X-Page-Size: Number of records per page
+    
+    Results can be sorted by created_at, status, or apartment_number.
     """
-    Transform MortgageDeedCreate model to database format.
+)
+async def list_mortgage_deeds(
+    response: Response,
+    deed_status: Optional[str] = Query(None, description="Filter by deed status (e.g., CREATED, PENDING_SIGNATURE, COMPLETED)"),
+    housing_cooperative_id: Optional[int] = Query(None, description="Filter by housing cooperative ID"),
+    bank_id: Optional[int] = Query(None, description="Filter by bank ID"),
+    created_after: Optional[datetime] = Query(None, description="Filter by creation date after (ISO format)"),
+    created_before: Optional[datetime] = Query(None, description="Filter by creation date before (ISO format)"),
+    borrower_person_number: Optional[str] = Query(None, pattern=r'^\d{12}$', description="Filter by borrower's person number (12 digits)"),
+    housing_cooperative_name: Optional[str] = Query(None, description="Filter by housing cooperative name (partial match)"),
+    apartment_number: Optional[str] = Query(None, description="Filter by exact apartment number"),
+    credit_numbers: Optional[str] = Query(None, description="Filter by comma-separated list of credit numbers"),
+    sort_by: Optional[str] = Query(None, description="Sort field (created_at, status, apartment_number)"),
+    sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order (asc or desc)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, le=100, description="Records per page (max 100)"),
+    current_user: dict = Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase)
+) -> List[MortgageDeedResponse]:
+    """
+    List and filter mortgage deeds with pagination.
     
     Args:
-        input_data: MortgageDeedCreate model instance
+        deed_status: Filter by deed status
+        housing_cooperative_id: Filter by housing cooperative
+        bank_id: Filter by bank ID
+        created_after: Filter by creation date after
+        created_before: Filter by creation date before
+        borrower_person_number: Filter by borrower's person number
+        housing_cooperative_name: Filter by housing cooperative name
+        apartment_number: Filter by apartment number
+        credit_numbers: Filter by comma-separated list of credit numbers
+        sort_by: Field to sort by
+        sort_order: Sort direction
+        page: Page number (1-based)
+        page_size: Records per page
+        current_user: Current authenticated user
+        supabase: Supabase client
         
     Returns:
-        dict: Transformed data for database insertion
-    """
-    try:
-        # Convert model to dict
-        deed_dict = input_data.model_dump()
+        List of mortgage deeds matching filters
         
-        # Handle credit numbers
-        credit_numbers = (
-            [int(deed_dict["credit_number"])]
-            if not deed_dict.get("credit_numbers")
-            else [int(n) for n in deed_dict["credit_numbers"]]
+    Raises:
+        HTTPException: If query fails
+    """
+    
+    try:
+        # Validate sort field if provided
+        valid_sort_fields = {'created_at', 'status', 'apartment_number'}
+        if sort_by and sort_by not in valid_sort_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid sort field. Must be one of: {', '.join(valid_sort_fields)}"
+            )
+        
+        # Build base query
+        query = supabase.table('mortgage_deeds').select(
+            "*, borrowers(*), housing_cooperative:housing_cooperatives(*), housing_cooperative_signers(*), accounting_firm_signers(*)"
+        )
+        
+        # Always filter by current user's bank_id for bank users
+        if current_user.get("bank_id"):
+            query = query.eq('bank_id', current_user["bank_id"])
+        
+        # Apply filters
+        if deed_status:
+            query = query.eq('status', deed_status)
+        if housing_cooperative_id:
+            query = query.eq('housing_cooperative_id', housing_cooperative_id)
+        if created_after:
+            query = query.gte('created_at', created_after.isoformat())
+        if created_before:
+            query = query.lte('created_at', created_before.isoformat())
+        if apartment_number:
+            query = query.eq('apartment_number', apartment_number)
+        if housing_cooperative_name:
+            query = query.ilike('housing_cooperatives.name', f'%{housing_cooperative_name}%')
+        if credit_numbers:
+            credit_number_list = [cn.strip() for cn in credit_numbers.split(',')]
+            query = query.in_('credit_number', credit_number_list)
+        
+        # Handle borrower person number filter
+        if borrower_person_number:
+            borrower_deeds = await handle_supabase_operation(
+                operation_name="fetch deeds by borrower",
+                operation=supabase.table('borrowers')
+                    .select('deed_id')
+                    .eq('person_number', borrower_person_number)
+                    .execute(),
+                error_msg="Failed to fetch deeds by borrower"
+            )
+            
+            if borrower_deeds.data:
+                deed_ids = [b['deed_id'] for b in borrower_deeds.data]
+                query = query.in_('id', deed_ids)
+            else:
+                return []
+        
+        # Get total count for pagination
+        count_query = supabase.table('mortgage_deeds')
+        # Build count query with filters
+        count_query = count_query.select("id")
+        if current_user.get("bank_id"):
+            count_query = count_query.eq('bank_id', current_user["bank_id"])
+        if deed_status:
+            count_query = count_query.eq('status', deed_status)
+        if housing_cooperative_id:
+            count_query = count_query.eq('housing_cooperative_id', housing_cooperative_id)
+        if created_after:
+            count_query = count_query.gte('created_at', created_after.isoformat())
+        if created_before:
+            count_query = count_query.lte('created_at', created_before.isoformat())
+        if apartment_number:
+            count_query = count_query.eq('apartment_number', apartment_number)
+        if credit_numbers:
+            credit_number_list = [cn.strip() for cn in credit_numbers.split(',')]
+            count_query = count_query.in_('credit_number', credit_number_list)
+        
+        
+        # Execute count query
+        count_result = await handle_supabase_operation(
+            operation_name="count mortgage deeds",
+            operation=count_query.execute(),
+            error_msg="Failed to count mortgage deeds"
+        )
+        
+        total_count = len(count_result.data)
+        total_pages = (total_count + page_size - 1) // page_size
+        
+        # Apply sorting
+        if sort_by:
+            order_expression = sort_by
+            query = query.order(order_expression)
+        
+        # Apply pagination
+        start = (page - 1) * page_size
+        query = query.range(start, start + page_size - 1)
+        
+        # Execute final query
+        result = await handle_supabase_operation(
+            operation_name="list mortgage deeds",
+            operation=query.execute(),
+            error_msg="Failed to fetch mortgage deeds"
+        )
+        
+        # Set pagination headers
+        response.headers["X-Total-Count"] = str(total_count)
+        response.headers["X-Total-Pages"] = str(total_pages)
+        response.headers["X-Current-Page"] = str(page)
+        response.headers["X-Page-Size"] = str(page_size)
+        
+        if not result.data:
+            return []
+        
+        return [MortgageDeedResponse(**deed) for deed in result.data]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error in list_mortgage_deeds: %s", str(e), exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch mortgage deeds"
         )
 
-        # Build housing cooperative info
-        housing_cooperative_info = {
-            "organization_number": deed_dict["organization_number"],
-            "housing_cooperative_id": deed_dict["housing_cooperative_id"],
-            "housing_cooperative_name": deed_dict["cooperative_name"],
-            "housing_cooperative_address": deed_dict["cooperative_address"],
-            "housing_cooperative_postal_code": deed_dict["cooperative_postal_code"],
-            "housing_cooperative_city": deed_dict["cooperative_city"]
-        }
-
-        # Build apartment info
-        apartment_info = {
-            "apartment_address": deed_dict["apartment_address"],
-            "apartment_number": deed_dict["apartment_number"],
-            "apartment_postal_code": deed_dict["apartment_postal_code"],
-            "apartment_city": deed_dict["apartment_city"]
-        }
-
-        # Convert housing cooperative signers
-        housing_cooperative_signers = [
-            {
-                "administrator_name": signer["administrator_name"],
-                "administrator_person_number": signer["administrator_person_number"],
-                "administrator_email": signer["administrator_email"]
-            }
-            for signer in deed_dict.get("housing_cooperative_signers", [])
-        ]
-
-        # Convert borrowers
-        borrowers = [
-            {
-                "name": borrower["name"],
-                "person_number": borrower["person_number"],
-                "email": borrower["email"],
-                "ownership_percentage": borrower["ownership_percentage"]
-            }
-            for borrower in deed_dict.get("borrowers", [])
-        ]
-
-        # Assembling final payload
-        deed_data = {
-            "credit_numbers": credit_numbers,
-            "housing_cooperative_info": housing_cooperative_info,
-            "apartment_info": apartment_info,
-            "housing_cooperative_signers": housing_cooperative_signers,
-            "borrowers": borrowers,
-            "is_accounting_firm": deed_dict.get("is_accounting_firm", False),
-            "has_existing_mortgages": deed_dict.get("has_existing_mortgages", False),
-            "existing_mortgage_bank": deed_dict.get("existing_mortgage_bank", ""),
-            "existing_mortgage_date": deed_dict.get("existing_mortgage_date", ""),
-            "notes": deed_dict.get("notes", "")
-        }
-
-        return deed_data
+@router.get(
+    "/{deed_id}",
+    response_model=MortgageDeedResponse,
+    summary="Get mortgage deed details",
+    description="""
+    Retrieves detailed information about a specific mortgage deed by ID.
+    
+    Returns:
+    - Complete deed data with all relations
+    - Associated borrowers
+    - Housing cooperative details
+    - Housing cooperative signers
+    - Accounting firm signers
+    """
+)
+async def get_mortgage_deed(
+    deed_id: int = Path(..., description="The ID of the mortgage deed to retrieve"),
+    current_user: dict = Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase)
+) -> MortgageDeedResponse:
+    """
+    Get a specific mortgage deed by ID.
+    
+    Args:
+        deed_id: ID of the deed to retrieve
+        current_user: Current authenticated user
+        supabase: Supabase client
         
+    Returns:
+        Complete deed data with relations
+        
+    Raises:
+        HTTPException: If deed not found or user lacks access
+    """
+    try:
+        # Fetch deed with all relations
+        result = await handle_supabase_operation(
+            operation_name=f"fetch deed {deed_id}",
+            operation=supabase.table("mortgage_deeds")
+                .select("*, borrowers(*), housing_cooperative:housing_cooperatives(*), housing_cooperative_signers(*), accounting_firm_signers(*)")
+                .eq("id", deed_id)
+                .single()
+                .execute(),
+            error_msg=f"Failed to fetch mortgage deed {deed_id}"
+        )
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Mortgage deed {deed_id} not found"
+            )
+        
+        deed_data = result.data
+        
+        # Convert to response model
+        return MortgageDeedResponse(**deed_data)
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error transforming deed data: {str(e)}")
-        raise ValueError(f"Failed to transform deed data: {str(e)}")
-
-# @router.get(
-#     "",
-#     response_model=List[MortgageDeedResponse],
-#     summary="List and filter mortgage deeds",
-#     description="""
-#     Retrieves a list of mortgage deeds with optional filtering and sorting.
-    
-#     Supports filtering by:
-#     - Status
-#     - Housing cooperative
-#     - Creation date range
-#     - Borrower's person number
-#     - Housing cooperative name
-#     - Apartment number
-#     - Credit numbers (comma-separated list)
-    
-#     Results are paginated and include pagination headers:
-#     - X-Total-Count: Total number of records
-#     - X-Total-Pages: Total number of pages
-#     - X-Current-Page: Current page number
-#     - X-Page-Size: Number of records per page
-    
-#     Results can be sorted by created_at, status, or apartment_number.
-#     """
-# )
-# async def list_mortgage_deeds(
-#     response: Response,
-#     deed_status: Optional[str] = Query(None, description="Filter by deed status (e.g., CREATED, PENDING_SIGNATURE, COMPLETED)"),
-#     housing_cooperative_id: Optional[int] = Query(None, description="Filter by housing cooperative ID"),
-#     bank_id: Optional[int] = Query(None, description="Filter by bank ID"),
-#     created_after: Optional[datetime] = Query(None, description="Filter by creation date after (ISO format)"),
-#     created_before: Optional[datetime] = Query(None, description="Filter by creation date before (ISO format)"),
-#     borrower_person_number: Optional[str] = Query(None, pattern=r'^\d{12}$', description="Filter by borrower's person number (12 digits)"),
-#     housing_cooperative_name: Optional[str] = Query(None, description="Filter by housing cooperative name (partial match)"),
-#     apartment_number: Optional[str] = Query(None, description="Filter by exact apartment number"),
-#     credit_numbers: Optional[str] = Query(None, description="Filter by comma-separated list of credit numbers"),
-#     sort_by: Optional[str] = Query(None, description="Sort field (created_at, status, apartment_number)"),
-#     sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order (asc or desc)"),
-#     page: int = Query(1, ge=1, description="Page number"),
-#     page_size: int = Query(50, le=100, description="Records per page (max 100)"),
-#     current_user: dict = Depends(get_current_user),
-#     supabase: SupabaseClient = Depends(get_supabase)
-# ) -> List[MortgageDeedResponse]:
-#     """
-#     List and filter mortgage deeds with pagination.
-    
-#     Args:
-#         deed_status: Filter by deed status
-#         housing_cooperative_id: Filter by housing cooperative
-#         bank_id: Filter by bank ID
-#         created_after: Filter by creation date after
-#         created_before: Filter by creation date before
-#         borrower_person_number: Filter by borrower's person number
-#         housing_cooperative_name: Filter by housing cooperative name
-#         apartment_number: Filter by apartment number
-#         credit_numbers: Filter by comma-separated list of credit numbers
-#         sort_by: Field to sort by
-#         sort_order: Sort direction
-#         page: Page number (1-based)
-#         page_size: Records per page
-#         current_user: Current authenticated user
-#         supabase: Supabase client
-        
-#     Returns:
-#         List of mortgage deeds matching filters
-        
-#     Raises:
-#         HTTPException: If query fails
-#     """
-    
-#     try:
-#         # Validate sort field if provided
-#         valid_sort_fields = {'created_at', 'status', 'apartment_number'}
-#         if sort_by and sort_by not in valid_sort_fields:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail=f"Invalid sort field. Must be one of: {', '.join(valid_sort_fields)}"
-#             )
-        
-#         # Build base query
-#         query = supabase.table('mortgage_deeds').select(
-#             "*, borrowers(*), housing_cooperative:housing_cooperatives(*), housing_cooperative_signers(*)"
-#         )
-        
-#         # Always filter by current user's bank_id
-#         query = query.eq('bank_id', current_user["bank_id"])
-        
-#         # Apply filters
-#         if deed_status:
-#             query = query.eq('status', deed_status)
-#         if housing_cooperative_id:
-#             query = query.eq('housing_cooperative_id', housing_cooperative_id)
-#         if created_after:
-#             query = query.gte('created_at', created_after.isoformat())
-#         if created_before:
-#             query = query.lte('created_at', created_before.isoformat())
-#         if apartment_number:
-#             query = query.eq('apartment_number', apartment_number)
-#         if housing_cooperative_name:
-#             query = query.ilike('housing_cooperatives.name', f'%{housing_cooperative_name}%')
-#         if credit_numbers:
-#             credit_number_list = [cn.strip() for cn in credit_numbers.split(',')]
-#             query = query.in_('credit_number', credit_number_list)
-        
-#         # Handle borrower person number filter
-#         if borrower_person_number:
-#             borrower_deeds = await handle_supabase_operation(
-#                 operation_name="fetch deeds by borrower",
-#                 operation=supabase.table('borrowers')
-#                     .select('deed_id')
-#                     .eq('person_number', borrower_person_number)
-#                     .execute(),
-#                 error_msg="Failed to fetch deeds by borrower"
-#             )
-            
-#             if borrower_deeds.data:
-#                 deed_ids = [b['deed_id'] for b in borrower_deeds.data]
-#                 query = query.in_('id', deed_ids)
-#             else:
-#                 return []
-        
-#         # Get total count for pagination
-#         count_query = supabase.table('mortgage_deeds')
-#         # Build count query with filters
-#         count_query = count_query.select("id")
-#         count_query = count_query.eq('bank_id', current_user["bank_id"])
-#         if deed_status:
-#             count_query = count_query.eq('status', deed_status)
-#         if housing_cooperative_id:
-#             count_query = count_query.eq('housing_cooperative_id', housing_cooperative_id)
-#         if created_after:
-#             count_query = count_query.gte('created_at', created_after.isoformat())
-#         if created_before:
-#             count_query = count_query.lte('created_at', created_before.isoformat())
-#         if apartment_number:
-#             count_query = count_query.eq('apartment_number', apartment_number)
-#         if credit_numbers:
-#             credit_number_list = [cn.strip() for cn in credit_numbers.split(',')]
-#             count_query = count_query.in_('credit_number', credit_number_list)
-        
-        
-#         # Execute count query
-#         count_result = await handle_supabase_operation(
-#             operation_name="count mortgage deeds",
-#             operation=count_query.execute(),
-#             error_msg="Failed to count mortgage deeds"
-#         )
-        
-#         total_count = len(count_result.data)
-#         total_pages = (total_count + page_size - 1) // page_size
-        
-#         # Apply sorting
-#         if sort_by:
-#             order_expression = sort_by
-#             query = query.order(order_expression)
-        
-#         # Apply pagination
-#         start = (page - 1) * page_size
-#         query = query.range(start, start + page_size - 1)
-        
-#         # Execute final query
-#         result = await handle_supabase_operation(
-#             operation_name="list mortgage deeds",
-#             operation=query.execute(),
-#             error_msg="Failed to fetch mortgage deeds"
-#         )
-        
-#         # Set pagination headers
-#         response.headers["X-Total-Count"] = str(total_count)
-#         response.headers["X-Total-Pages"] = str(total_pages)
-#         response.headers["X-Current-Page"] = str(page)
-#         response.headers["X-Page-Size"] = str(page_size)
-        
-#         if not result.data:
-#             return []
-        
-#         return [MortgageDeedResponse(**deed) for deed in result.data]
-        
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error("Error in list_mortgage_deeds: %s", str(e), exc_info=True)
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Failed to fetch mortgage deeds"
-#         )
-
-# @router.get(
-#     "/{deed_id}",
-#     response_model=MortgageDeedResponse,
-#     summary="Get a specific mortgage deed",
-#     description="""
-#     Retrieves detailed information about a specific mortgage deed by its ID.
-    
-#     Only accessible by:
-#     - Borrowers listed on the deed
-#     - Housing cooperative administrators
-    
-#     Returns the complete deed data including:
-#     - Basic deed information
-#     - Associated borrowers
-#     - Housing cooperative details
-#     """
-# )
-# async def get_mortgage_deed(
-#     deed_id: int = Path(..., description="The ID of the mortgage deed to retrieve"),
-#     current_user: dict = Depends(get_current_user),
-#     supabase: SupabaseClient = Depends(get_supabase)
-# ) -> MortgageDeedResponse:
-#     """
-#     Get a specific mortgage deed by ID.
-    
-#     Args:
-#         deed_id: ID of the deed to retrieve
-#         current_user: Current authenticated user
-#         supabase: Supabase client
-        
-#     Returns:
-#         Complete deed data with relations
-        
-#     Raises:
-#         HTTPException: If deed not found or user lacks access
-#     """
-#     # Fetch deed with relations
-#     deed = await get_deed_with_relations(supabase, deed_id)
-    
-#     # Verify user has access
-#     await verify_deed_access(deed, current_user)
-    
-#     return MortgageDeedResponse(**deed)
+        logger.error(f"Error fetching mortgage deed {deed_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch mortgage deed"
+        )
 
 # @router.put(
 #     "/{deed_id}",

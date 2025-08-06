@@ -2,8 +2,29 @@ from fastapi import HTTPException, status
 from supabase._async.client import AsyncClient
 import logging
 import postgrest.exceptions
+from decimal import Decimal
+import json
 
 logger = logging.getLogger(__name__)
+
+def convert_decimals_to_float(obj):
+    """
+    Recursively convert all Decimal values to float in a data structure.
+    
+    Args:
+        obj: Any object (dict, list, Decimal, or other types)
+        
+    Returns:
+        Object with all Decimal values converted to float
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_decimals_to_float(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals_to_float(item) for item in obj]
+    else:
+        return obj
 
 async def handle_supabase_operation(operation_name: str, operation, error_msg: str):
     """
